@@ -16,3 +16,20 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Key derivation (600,000 PBKDF2 rounds, Argon2id) and RSA key generation are far too slow
+# unoptimised; optimise these dependencies in dev/test builds.
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.rsa]
+opt-level = 3
+[profile.dev.package.num-bigint-dig]
+opt-level = 3

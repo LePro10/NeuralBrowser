@@ -145,8 +145,10 @@ unabhängige Prüfung [prüfen]; `rsa` hat eine bekannte Timing-Schwäche (RUSTS
 die nur einen Angreifer betrifft, der Entschlüsselungszeiten messen kann.
 
 Geheimnisse und wo sie liegen: Master-Passwort nur während der Eingabe im Speicher, nie gespeichert;
-abgeleitete Schlüssel und entschlüsselte Einträge nur im Speicher des Kerns (gesperrte Seiten,
-`zeroize`), weg beim Sperren und Beenden; Refresh-Token und Geräte-Kennung im Schlüsselbund;
+abgeleitete Schlüssel nur im Speicher des Kerns in gesperrten Seiten (`mlock`, `zeroize`); Passwörter
+bleiben auch im Speicher verschlüsselt und werden erst beim Ausfüllen entschlüsselt; Namen,
+Benutzernamen und Adressen der Einträge liegen entschlüsselt in normalem Speicher (gesperrte Seiten
+für jeden Eintrag würden das Limit des Systems sprengen); alles ist weg beim Sperren und Beenden; Refresh-Token und Geräte-Kennung im Schlüsselbund;
 der verschlüsselte Tresor-Stand des Servers darf als Datei im Profil liegen (ohne Schlüssel wertlos).
 
 | Bedrohung | Gegenmaßnahme | Restrisiko |

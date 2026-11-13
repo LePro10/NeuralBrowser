@@ -8,9 +8,11 @@ mod error;
 pub mod input;
 pub mod shield;
 pub mod store;
+pub mod vault;
 
 pub use error::NeuralError;
 pub use input::resolve_input;
 pub use store::Store;
+pub use vault::Vault;
 
 uniffi::setup_scaffolding!();
