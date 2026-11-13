@@ -2,10 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! NeuralBrowser core: storage and address-bar input resolution.
+//! NeuralBrowser core: storage, address-bar input resolution and ad-block rule conversion.
 
 mod error;
 pub mod input;
+pub mod shield;
 pub mod store;
 
 pub use error::NeuralError;
