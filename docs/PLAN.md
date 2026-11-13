@@ -61,6 +61,11 @@ Kennzeichnung: **[belegt]** = mit Quelle geprüft, **[Einschätzung]** = mein Ur
 - Unabhängig davon ist das Wichtigste fest eingebaut, damit weniger Erweiterungen nötig
   sind: Werbeblocker, Lesemodus, Dunkelmodus, Userscripts, lokaler Passwort-Speicher.
 
+**Ergebnis Phase 0 (13.11.2026):** 4 von 10 getesteten Erweiterungen laufen unverändert,
+Bitwarden nicht. Entscheidung: WebKit bleibt, dazu ein "Übersetzer", der Erweiterungen
+beim Installieren umschreibt, und eine öffentliche Liste getesteter Erweiterungen.
+Siehe `docs/ENTSCHEIDUNG.md` und `docs/ERWEITERUNGS-TEST.md`.
+
 ---
 
 ## 4. Architektur
