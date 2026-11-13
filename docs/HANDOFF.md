@@ -18,9 +18,11 @@ https://github.com/LePro10/NeuralBrowser
 - Bedrohungsmodell `docs/SECURITY.md`, öffentliche Liste `docs/ERWEITERUNGEN.md`.
 
 ## Nächste Schritte
-1. `shield` in die App einbinden: Listen laden, `convertFilterLists`, mit
-   `WKContentRuleListStore` kompilieren, an WebViews hängen, Schalter pro Website
-   (`appendSiteExceptions`). Im echten Fenster prüfen, dass geblockt wird.
+1. ~~`shield` in die App einbinden~~ erledigt 13.11.2026:
+   `Sources/NeuralBrowser/Shield/Shield.swift`, Menü Ansicht → „Block Ads and Trackers“ (global
+   und pro Website), Test `apps/apple/scripts/shield-test.sh` 5/5 grün, echte Listen 130.584
+   Regeln in 2,6 s. Schalter pro Website hängt die Listen pro Tab ab statt `appendSiteExceptions`
+   (sonst Neukompilieren, Sekunden pro Klick). Details: `apps/apple/README.md` „Content blocking“.
 2. Rest Phase 1: Oberfläche für Lesezeichen, Verlauf, Einstellungen (Suchmaschine),
    RAM-Anzeige pro Tab, heller Modus ansehen.
 3. **Vaultwarden fest einbauen** (Nutzer-Entscheidung 13.11.2026, hat Vorrang vor der
@@ -50,7 +52,8 @@ https://github.com/LePro10/NeuralBrowser
   Basis-URL der Erweiterungen ist pro Start zufällig (Web-Speicher der Erweiterungsseiten überlebt
   keinen Neustart, `chrome.storage` schon; jede Start-URL landet als eigene Domain in der ITP-Datenbank).
 - Ungeprüft: 15-Minuten-Timer der schlafenden Tabs, Wachhalten bei Ton/Video,
-  Blockverhalten der Regel-Listen im echten WebView, Verhalten bei kaputter Datenbank,
+  Verhalten bei kaputter Datenbank, Shield-Menüschalter von Hand geklickt (nur per
+  Startoption getestet), Shield-Aktualisierung nach 4 Tagen, Shield ohne Netz beim ersten Start,
   Verwaltungsansicht von Hand durchgeklickt.
 - Stylus, Return YouTube Dislike und Userscript-Manager unter Manifest V3 laufen nicht.
 - Linker-Warnungen sind pauschal stumm (`-Xlinker -w` in `apps/apple/Package.swift`).
@@ -80,7 +83,8 @@ Es gibt keine fertige, sauber lizenzierte Bibliothek. Kandidaten:
   Passkeys; Vaultwarden-Betrieb und Sicherheitsprüfung unbelegt.
 - `bw serve` (offizielles CLI): braucht Node, lokale Schnittstelle ohne Anmeldung,
   Lizenz des Pakets unklar. Triwarden (GPL-3, Swift, 0.x) nur als Referenz.
-**Offene Entscheidung für den Nutzer:** (a) auf rbw-Code (MIT) aufbauen und die
+**Entschieden (Nutzer, 13.11.2026): Weg (a), rbw-Code (MIT), Lizenz bleibt MPL-2.0.**
+Ursprüngliche Frage: (a) auf rbw-Code (MIT) aufbauen und die
 Kryptografie-Bausteine der RustCrypto-Crates nutzen – Empfehlung, Lizenz bleibt MPL-2.0;
 (b) offizielles SDK unter GPL-3.0, dann wird die App faktisch GPL-3.0. In beiden Fällen
 vorher prüfen: rbw-Quelltext als Bibliothek nutzbar?, Test gegen den Vaultwarden-Server

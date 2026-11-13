@@ -119,6 +119,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         webView.allowsMagnification = true
         webView.isInspectable = true
         webView.autoresizingMask = [.width, .height]
+        app.shield?.apply(to: webView, url: url)
         return webView
     }
 
@@ -337,6 +338,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     @objc func zoomOut(_ sender: Any?) { activeTab?.webView.map { $0.pageZoom = max($0.pageZoom - 0.1, 0.3) } }
     @objc func actualSize(_ sender: Any?) { activeTab?.webView?.pageZoom = 1 }
 
+    /// Menu "Block Ads and Trackers on This Site": flips the per-site switch and reloads.
+    @objc func toggleShieldForSite(_ sender: Any?) {
+        guard let shield = app.shield, let tab = activeTab, Shield.siteKey(for: tab.url) != nil else { return }
+        shield.setSiteDisabled(!shield.isSiteDisabled(tab.url), for: tab.url)
+        // Every open tab of that site follows; the reload re-runs the page with the new rules.
+        for window in app.windows {
+            for other in window.tabs where Shield.siteKey(for: other.url) == Shield.siteKey(for: tab.url) {
+                guard let wv = other.webView else { continue }
+                shield.apply(to: wv, url: other.url)
+                wv.reload()
+            }
+        }
+    }
+
+    @objc func toggleShield(_ sender: Any?) {
+        guard let shield = app.shield else { return }
+        shield.setEnabled(!shield.isEnabled)
+        activeTab?.webView?.reload()
+    }
+
     @objc func findInPage(_ sender: Any?) {
         guard activeTab?.webView != nil else { return }
         findBar.onSearch = { [weak self] text, backwards in self?.find(text, backwards: backwards) }
@@ -437,5 +458,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
         tabs.removeAll()
         activeTab = nil
+    }
+}
+
+// MARK: - Menu state
+
+extension BrowserWindowController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(toggleShield(_:)):
+            menuItem.state = app.shield?.isEnabled == true ? .on : .off
+            return app.shield != nil
+        case #selector(toggleShieldForSite(_:)):
+            guard let shield = app.shield, shield.isEnabled, Shield.siteKey(for: activeTab?.url) != nil else {
+                menuItem.state = .off
+                return false
+            }
+            menuItem.state = shield.isSiteDisabled(activeTab?.url) ? .off : .on
+            return true
+        default:
+            return true
+        }
     }
 }

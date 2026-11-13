@@ -94,8 +94,9 @@ is split with `maxRulesPerChunk` (default 100,000). `ignore-previous-rules` (use
 *same* compiled list. Hence the exceptions, which the converter orders after all other
 rules, are copied to the end of every chunk (`exceptionRulesPerChunk`; they count
 against the chunk size; error if the limit is not larger than that number). Chunks
-together then behave like one list. Not verified at runtime in a web view; derived from
-the documented semantics.
+together then behave like one list. Blocking with two real chunks runs in the app
+(`apps/apple/scripts/shield-test.sh` checks blocking with a small list); that an exception
+really reaches across chunks is still derived from the documented semantics only.
 
 **Per-site off switch.** `siteExceptionRuleList` is one rule (`if-domain` `*host`,
 `ignore-previous-rules`). Because of the same-list rule it does nothing as a separate

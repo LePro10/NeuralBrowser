@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import AppKit
+import NeuralCore
 import WebKit
 
 /// `--smoke-test URL [URL …]`: opens a real browser window (in-memory store unless --profile-dir,
@@ -52,6 +53,32 @@ final class SmokeTest {
                     "error": r.error ?? NSNull(),
                     "warnings": r.webExtension?.errors.map(ExtensionManager.describe) ?? [],
                 ]
+            }
+        }
+
+        if !app.options.shieldListFiles.isEmpty || app.options.shieldDownload {
+            let shield = app.enableTestShield()
+            let started = Date()
+            if app.options.shieldDownload {
+                await shield.update()
+            } else {
+                let inputs = app.options.shieldListFiles.compactMap { file in
+                    (try? String(contentsOf: file, encoding: .utf8)).map {
+                        FilterListInput(id: file.lastPathComponent, text: $0)
+                    }
+                }
+                await shield.build(from: inputs)
+            }
+            for host in app.options.shieldOffHosts {
+                shield.setSiteDisabled(true, for: URL(string: "https://\(host)/"))
+            }
+            report["shield"] = [
+                "lists": shield.ruleLists.count, "rules": shield.ruleCount,
+                "buildMs": ms(since: started), "error": shield.lastError as Any? ?? NSNull(),
+                "offHosts": shield.disabledHosts.sorted(),
+            ]
+            if shield.ruleLists.isEmpty {
+                return finish(ok: false, error: "shield: no rule list (\(shield.lastError ?? "?"))")
             }
         }
 
@@ -122,6 +149,13 @@ final class SmokeTest {
         let hit = await withCheckedContinuation { c in window.find(word, backwards: false) { c.resume(returning: $0) } }
         let miss = await withCheckedContinuation { c in window.find("zqxjzqxj", backwards: false) { c.resume(returning: $0) } }
         report["findInPage"] = ["word": word, "found": hit, "nonsenseFound": miss]
+
+        if let js = app.options.evalScript {
+            // Give late requests (ads, trackers) a moment before looking at the page.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            let value = await evaluate(js, in: first.webView)
+            report["eval"] = (value is String || value is NSNumber) ? value! : NSNull()
+        }
 
         if let path = app.options.screenshotPath {
             await saveScreenshot(to: URL(fileURLWithPath: path))
@@ -270,6 +304,7 @@ final class SmokeTest {
             let size = item.destination.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] }
             return ["file": item.destination?.path ?? item.filename, "state": "\(item.state)", "bytes": size ?? 0]
         }
+        app.shield?.removeFiles()
         ExtensionReport.writeJSON(report)
         let hold = app.options.hold
         DispatchQueue.main.asyncAfter(deadline: .now() + hold) { exit(ok ? 0 : 1) }

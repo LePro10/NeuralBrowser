@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let processStart = processStartDate()
     private(set) var store: BrowserStore = RustStore.inMemory()
     private(set) var extensionManager: ExtensionManager?
+    /// Content blocking; nil in self tests unless they ask for it.
+    private(set) var shield: Shield?
     let downloads = DownloadManager()
     private(set) var windows: [BrowserWindowController] = []
     private var closedTabs: [(url: URL, title: String)] = []
@@ -119,6 +121,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // extension installed later reaches existing tabs; loading happens after the window is up.
         let extDir = options.resolvedExtensionsDirectory
         enableExtensions(persistent: true)
+        // Before the first tab, so restored tabs are filtered as soon as the lists are loaded.
+        shield = Shield(directory: dataDir.appendingPathComponent("Shield", isDirectory: true), settings: store)
+        shield?.start()
 
         let window = openWindow(isPrivate: false)
         if let session = try? store.loadSession(), !session.tabs.isEmpty {
@@ -150,6 +155,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let manager = ExtensionManager(app: self, persistent: persistent)
         extensionManager = manager
         return manager
+    }
+
+    /// Self tests: content blocking on a throw-away directory, nothing persisted.
+    func enableTestShield() -> Shield {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nb-shield-\(getpid())", isDirectory: true)
+        let s = Shield(directory: dir, settings: nil)
+        shield = s
+        return s
     }
 
     func applicationWillTerminate(_ notification: Notification) {

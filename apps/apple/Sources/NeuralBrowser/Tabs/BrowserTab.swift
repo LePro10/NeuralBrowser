@@ -170,6 +170,10 @@ extension BrowserTab: WKNavigationDelegate {
             owner?.openTab(url: target, after: self, activate: false)
             return decisionHandler(.cancel)
         }
+        // Content blocking follows the site of the main document (per-site switch).
+        if navigationAction.targetFrame?.isMainFrame == true {
+            owner?.app.shield?.apply(to: webView, url: navigationAction.request.url)
+        }
         decisionHandler(.allow)
     }
 

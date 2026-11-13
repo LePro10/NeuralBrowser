@@ -10,6 +10,7 @@ import NeuralCore
 ///   NeuralBrowser [--data-dir DIR] [--extensions-dir DIR]
 ///   NeuralBrowser --smoke-test URL [URL ...] [--timeout SEC] [--hold SEC] [--sleep-test]
 ///                 [--private] [--screenshot PNG] [--profile-dir DIR] [--store-bench]
+///                 [--shield-lists FILE ... | --shield-download] [--shield-off HOST] [--eval JS]
 ///   NeuralBrowser --extension-report [--extensions-dir DIR]
 ///   NeuralBrowser --ext-script STEPS.json [--extensions-dir DIR] [--timeout SEC]
 ///                 [--normal-mode --data-dir DIR]   (persistent profile, normal loading, see ExtensionScript)
@@ -53,6 +54,14 @@ struct LaunchOptions {
     /// `--ext-script` only: run like the normal app on `--data-dir` (persistent store, WebKit data
     /// and extension storage, extensions loaded and granted the normal way) instead of in memory.
     var scriptNormalMode = false
+    /// Smoke test: content blocking with these local filter list files (no network).
+    var shieldListFiles: [URL] = []
+    /// Smoke test: content blocking with the real lists, downloaded into a temporary folder.
+    var shieldDownload = false
+    /// Smoke test: sites where content blocking is switched off.
+    var shieldOffHosts: [String] = []
+    /// Smoke test: JavaScript evaluated in the first tab after loading; the result goes into the report.
+    var evalScript: String?
 
     static func parse(_ args: [String]) -> LaunchOptions {
         var o = LaunchOptions()
@@ -94,6 +103,14 @@ struct LaunchOptions {
             case "--extension-ua": o.extensionUserAgentName = value()
             case "--tab-ua": o.tabUserAgentName = value()
             case "--normal-mode": o.scriptNormalMode = true
+            case "--shield-lists":
+                while i + 1 < args.count, !args[i + 1].hasPrefix("--") {
+                    i += 1
+                    o.shieldListFiles.append(URL(fileURLWithPath: args[i]))
+                }
+            case "--shield-download": o.shieldDownload = true
+            case "--shield-off": if let v = value() { o.shieldOffHosts.append(v) }
+            case "--eval": o.evalScript = value()
             default: break // ignore unknown (e.g. -NSDocumentRevisionsDebugMode)
             }
             i += 1

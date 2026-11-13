@@ -48,6 +48,10 @@ protocol BrowserStore: AnyObject {
 enum SettingKey {
     static let searchTemplate = "search.template"
     static let sleepAfterMinutes = "tabs.sleepAfterMinutes"
+    /// "false" when content blocking is switched off everywhere.
+    static let shieldEnabled = "shield.enabled"
+    /// Sites (hosts without "www.", one per line) where content blocking is off.
+    static let shieldDisabledHosts = "shield.disabledHosts"
     static func extensionGrant(_ id: String) -> String { "extensions.grant.\(id)" }
     /// "false" when the user switched an installed extension off (key: folder id).
     static func extensionEnabled(_ id: String) -> String { "extensions.enabled.\(id)" }

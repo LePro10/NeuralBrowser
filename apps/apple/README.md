@@ -96,6 +96,25 @@ $B --ext-script /tmp/dr.json --extensions-dir /tmp/exts --timeout 120
 # --normal-mode --data-dir DIR: run the script like the normal app on that profile (persistent).
 ```
 
+## Content blocking (Shield)
+
+`Sources/NeuralBrowser/Shield/Shield.swift`. On a normal start the app downloads EasyList and
+EasyPrivacy (never bundled) into `<data-dir>/Shield/`, lets the Rust core convert them
+(`convertFilterLists`), compiles the chunks with `WKContentRuleListStore` and attaches them to
+every tab, private windows included. Later starts load the compiled lists from disk; they are
+rebuilt when older than 4 days. Measured 2026-11-13: 130,584 rules, 2 lists, download +
+convert + compile 2.6 s in the background, 48 MB on disk.
+
+View > "Block Ads and Trackers" (everywhere) and "… on This Site" (per site, including its
+subdomains; reloads the page). The per-site switch detaches the lists from a tab while its main
+document is on that site, decided on every main-frame navigation; nothing is recompiled.
+Known gaps: a tab opened by `window.open` shares its opener's rule set until one of the two
+navigates; no counter of blocked requests; no choice of lists yet.
+
+    scripts/shield-test.sh        # local page, no network: on, site off, off -> on, on -> off, private
+    $B --smoke-test URL --shield-download --eval 'JS'     # real lists in a temporary folder
+    $B --smoke-test URL --shield-lists FILE --shield-off HOST --eval 'JS'
+
 ## Extensions
 
 File ▸ Install Extension… takes a folder with `manifest.json`, a `.zip` or a

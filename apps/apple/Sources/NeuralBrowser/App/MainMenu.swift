@@ -51,6 +51,9 @@ enum MainMenu {
         item(view, "Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "+")
         item(view, "Zoom Out", #selector(BrowserWindowController.zoomOut(_:)), "-")
         item(view, "Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0")
+        view.addItem(.separator())
+        item(view, "Block Ads and Trackers", #selector(BrowserWindowController.toggleShield(_:)), "")
+        item(view, "Block Ads and Trackers on This Site", #selector(BrowserWindowController.toggleShieldForSite(_:)), "")
 
         let window = submenu(main, "Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
