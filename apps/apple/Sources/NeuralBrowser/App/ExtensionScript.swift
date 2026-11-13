@@ -18,7 +18,9 @@ import WebKit
 ///       async JS function body in the page world; with `until` it is polled until truthy.
 ///       target: "tab" (default), "popup:FOLDER", "background:FOLDER" (SPI, may be unavailable)
 ///   {"shot": "/tmp/x.png", "target": "window"}     target: "window" (default), "tab", "popup:FOLDER"
-///   {"popup": FOLDER}                              click the extension's toolbar action
+///   {"popup": FOLDER}                              run the extension's action (performAction, like a click)
+///   {"clickAction": FOLDER}                        real mouse click on the extension's sidebar button
+///   {"install": "/path/pkg.zip"}                   File ▸ Install Extension… with "Install and Enable" chosen
 ///   {"closePopup": FOLDER}
 ///   {"extensionsWindow": "/tmp/x.png"}             open the Extensions window, save a picture, return each summary
 ///   {"loadBackground": FOLDER}                    start the background content (service worker) now
@@ -27,9 +29,13 @@ import WebKit
 ///   {"click": "css selector", "target": "tab"}     real mouse click at the element's center
 ///   {"selectTab": 0}
 ///   {"errors": true}                               WebKit's error list of every extension
+/// With `--normal-mode --data-dir DIR` the script runs like the normal app on that (throw-away)
+/// profile: persistent store, WebKit website data and extension storage, extensions loaded with the
+/// grants stored in the profile. Run the same script twice on one DIR to test an app restart.
 /// Top level `"assumeVisible": true` turns off WebKit's window-occlusion detection for tab and popup
-/// web views (SPI, test only): with a locked screen every page is "hidden", animation frames stop and
-/// apps like Bitwarden's popup never finish rendering.
+/// web views (SPI, test only). Note: popups that stayed on a spinner and backgrounds that stopped
+/// answering after a few seconds were not caused by a locked screen but by tracking prevention
+/// deleting the background's service worker (see ExtensionManager.exemptFromTrackingPrevention).
 @MainActor
 final class ExtensionScript {
     unowned let app: AppDelegate
@@ -65,20 +71,69 @@ final class ExtensionScript {
 
     private func start(_ steps: [[String: Any]]) async {
         let extDir = app.options.resolvedExtensionsDirectory
-        if ExtensionManager.hasExtensions(in: extDir) {
-            let manager = app.enableExtensions(persistent: false)
-            let results = await manager.loadAll(from: extDir, autoGrant: true)
-            report["extensions"] = results.map { r -> [String: Any] in
-                [
-                    "folder": r.folder.lastPathComponent,
-                    "name": r.webExtension?.displayName ?? "?",
-                    "loaded": r.error == nil && (r.context?.isLoaded ?? false),
-                    "error": r.error ?? NSNull(),
-                    "warnings": r.webExtension?.errors.map(ExtensionManager.describe) ?? [],
-                    "baseURL": r.context?.baseURL.absoluteString ?? NSNull(),
-                ]
+        if app.scriptUsesProfile {
+            // Same order as AppDelegate.startNormal: controller first, window, then load what the
+            // user enabled, with the grants stored in the profile (no autoGrant).
+            report["mode"] = "normal"
+            report["dataDir"] = app.options.resolvedDataDirectory.path
+            let manager = app.enableExtensions(persistent: true)
+            openWindow()
+            let results = await manager.loadAll(from: extDir, autoGrant: false)
+            window.refreshExtensionBar()
+            report["extensions"] = results.map(Self.describe)
+        } else {
+            report["mode"] = "memory"
+            if ExtensionManager.hasExtensions(in: extDir) {
+                let manager = app.enableExtensions(persistent: false)
+                let results = await manager.loadAll(from: extDir, autoGrant: true)
+                report["extensions"] = results.map(Self.describe)
             }
+            openWindow()
         }
+
+        for (i, step) in steps.enumerated() {
+            guard !done else { return }
+            var result = await perform(step)
+            result["step"] = i
+            if let label = step["label"] { result["label"] = label }
+            results.append(result)
+        }
+        report["finalErrors"] = extensionErrors()
+        report["dataStores"] = dataStores()
+        finish(ok: true, error: nil)
+    }
+
+    /// Which website data store tabs and extension pages really use, and whether WebKit's tracking
+    /// prevention (ITP, read through an SPI getter) runs on it.
+    private func dataStores() -> [String: Any] {
+        func info(_ store: WKWebsiteDataStore?) -> Any {
+            guard let store else { return NSNull() }
+            let itp = NSSelectorFromString("_resourceLoadStatisticsEnabled")
+            return ["persistent": store.isPersistent, "identifier": store.identifier?.uuidString ?? "default",
+                    "isDefault": store === WKWebsiteDataStore.default(), "sameAsTabs": store === app.websiteDataStore,
+                    "trackingPrevention": store.responds(to: itp) ? (store.value(forKey: "_resourceLoadStatisticsEnabled") ?? NSNull()) : "unknown"]
+        }
+        var out: [String: Any] = ["tabs": info(window.activeTab?.webView?.configuration.websiteDataStore)]
+        out["cookiesAPI"] = info(manager?.controller.configuration.defaultWebsiteDataStore)
+        // What WebKit really gives extension web views (background, popup), checked per extension.
+        let pageStores = (manager?.contexts ?? []).compactMap { $0.webViewConfiguration?.websiteDataStore }
+        out["extensionPages"] = info(pageStores.first)
+        out["allExtensionsUseIt"] = pageStores.allSatisfy { $0 === app.websiteDataStore }
+        return out
+    }
+
+    private static func describe(_ r: ExtensionManager.LoadResult) -> [String: Any] {
+        [
+            "folder": r.folder.lastPathComponent,
+            "name": r.webExtension?.displayName ?? "?",
+            "loaded": r.error == nil && (r.context?.isLoaded ?? false),
+            "error": r.error ?? NSNull(),
+            "warnings": r.webExtension?.errors.map(ExtensionManager.describe) ?? [],
+            "baseURL": r.context?.baseURL.absoluteString ?? NSNull(),
+        ]
+    }
+
+    private func openWindow() {
         window = app.openWindow(isPrivate: false)
         window.onTabFinishedLoading = { [weak self] tab in self?.tabFinished(tab) }
         window.onTabFailed = { [weak self] tab, error in
@@ -89,16 +144,6 @@ final class ExtensionScript {
         window.showWindow(nil)
         NSApp.activate()
         window.refreshExtensionBar()
-
-        for (i, step) in steps.enumerated() {
-            guard !done else { return }
-            var result = await perform(step)
-            result["step"] = i
-            if let label = step["label"] { result["label"] = label }
-            results.append(result)
-        }
-        report["finalErrors"] = extensionErrors()
-        finish(ok: true, error: nil)
     }
 
     // MARK: Steps
@@ -110,8 +155,12 @@ final class ExtensionScript {
 
     private func perform(_ step: [String: Any]) async -> [String: Any] {
         defer {
-            forceVisible(window.activeTab?.webView)
-            for ctx in manager?.contexts ?? [] { forceVisible(ctx.action(for: window.activeTab)?.popupWebView) }
+            // `popupWebView` is created on first access: only touch it when asked to, otherwise the
+            // test itself would create and load the popup off-screen before the user's click.
+            if assumeVisible {
+                forceVisible(window.activeTab?.webView)
+                for ctx in manager?.contexts ?? [] { forceVisible(ctx.action(for: window.activeTab)?.popupWebView) }
+            }
         }
         if let target = step["open"] as? String { return await open(target, newTab: step["newTab"] as? Bool ?? false,
                                                                      wait: step["wait"] as? Double ?? 0.5) }
@@ -125,6 +174,8 @@ final class ExtensionScript {
         }
         if let path = step["shot"] as? String { return await shot(path, target: step["target"] as? String ?? "window") }
         if let folder = step["popup"] as? String { return await openPopup(folder) }
+        if let folder = step["clickAction"] as? String { return await clickAction(folder) }
+        if let path = step["install"] as? String { return await install(path) }
         if let folder = step["closePopup"] as? String {
             context(folder).flatMap { $0.action(for: window.activeTab) }?.closePopup()
             return ["closePopup": folder]
@@ -137,8 +188,9 @@ final class ExtensionScript {
         }
         if let folder = step["popupState"] as? String {
             let action = context(folder).flatMap { $0.action(for: window.activeTab) }
-            return ["popupState": folder, "shown": action?.popupPopover?.isShown ?? false,
-                    "popupURL": action?.popupWebView?.url?.absoluteString ?? NSNull()]
+            let shown = action?.popupPopover?.isShown ?? false // popupPopover/-WebView are created on access
+            return ["popupState": folder, "shown": shown,
+                    "popupURL": (shown ? action?.popupWebView?.url?.absoluteString : nil) ?? NSNull()]
         }
         if let keys = step["keys"] as? String { return await sendKeys(keys) }
         if let selector = step["click"] as? String { return await click(selector) }
@@ -294,6 +346,61 @@ final class ExtensionScript {
         return ["popup": folder, "presentsPopup": action?.presentsPopup ?? false, "presented": presented, "appActive": NSApp.isActive,
                 "popupLoaded": loaded, "popupURL": action?.popupWebView?.url?.absoluteString ?? NSNull(),
                 "popupSize": action?.popupWebView.map { "\(Int($0.frame.width))x\(Int($0.frame.height))" } ?? NSNull()]
+    }
+
+    /// A real mouse click on the extension's button in the sidebar, the way a user opens the popup.
+    /// The mouse-up is queued first: NSButton tracks the click in its own event loop.
+    private func clickAction(_ folder: String) async -> [String: Any] {
+        guard let ctx = context(folder), let manager else { return ["clickAction": folder, "error": "extension not loaded"] }
+        guard let nsWindow = window.window, let button = window.extensionButton(for: ctx) else {
+            return ["clickAction": folder, "error": "no button in the sidebar"]
+        }
+        nsWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        try? await Task.sleep(for: .milliseconds(200))
+        var presented = false
+        manager.onPopupPresented = { _, c in if c === ctx { presented = true } }
+        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        func event(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: nsWindow.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+        }
+        // What a real click at that point would hit (an overlapping view would swallow it).
+        let hit = nsWindow.contentView?.superview?.hitTest(point) ?? nsWindow.contentView?.hitTest(point)
+        let hitsButton = hit === button || hit?.isDescendant(of: button) == true
+        guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return ["clickAction": folder, "error": "no event"] }
+        NSApp.postEvent(up, atStart: false)
+        nsWindow.sendEvent(down)
+        for _ in 0..<100 where !presented { try? await Task.sleep(for: .milliseconds(100)) }
+        let action = ctx.action(for: window.activeTab)
+        forceVisible(action?.popupWebView)
+        var loaded = false
+        if presented, let wv = action?.popupWebView {
+            for _ in 0..<50 { if !wv.isLoading { loaded = true; break }; try? await Task.sleep(for: .milliseconds(100)) }
+        }
+        return ["clickAction": folder, "hitsButton": hitsButton, "buttonEnabled": (button as? NSControl)?.isEnabled ?? false,
+                "hasTarget": (button as? NSControl)?.target != nil, "hitView": hit.map { "\(type(of: $0))" } ?? NSNull(),
+                "at": "\(Int(point.x)),\(Int(point.y))", "presented": presented, "popoverShown": action?.popupPopover?.isShown ?? false,
+                "popupLoaded": loaded, "popupURL": action?.popupWebView?.url?.absoluteString ?? NSNull()]
+    }
+
+    /// File ▸ Install Extension… without the panel and with "Install and Enable" chosen:
+    /// unpack + translate, move into the profile, remember the grant, load into the running app.
+    private func install(_ path: String) async -> [String: Any] {
+        guard let manager else { return ["install": path, "error": "extensions off"] }
+        let dir = app.options.resolvedExtensionsDirectory
+        let pending = dir.appendingPathComponent(".pending-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: pending) }
+        let source = URL(fileURLWithPath: path)
+        let result = await Task.detached { Result { try Installer.install(from: source, into: pending) } }.value
+        do {
+            let record = try result.get()
+            try ExtensionInstallFlow.commit(record, from: pending, manager: manager, extensionsDir: dir)
+            await manager.setEnabled(true, id: record.id, in: dir)
+            return ["install": path, "id": record.id, "loaded": manager.context(id: record.id)?.isLoaded ?? false]
+        } catch {
+            return ["install": path, "error": "\(error)"]
+        }
     }
 
     // MARK: Screenshots

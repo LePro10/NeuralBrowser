@@ -34,6 +34,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     }
 
     /// Extension storage: in memory for self tests, per profile for `--data-dir`, else WebKit's default.
+    /// Website data and cookies of extension pages: the store of normal tabs.
     static func configuration(app: AppDelegate, persistent: Bool) -> WKWebExtensionController.Configuration {
         let config: WKWebExtensionController.Configuration
         if !persistent || app.isEphemeralProfile {
@@ -50,6 +51,12 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         // A Chrome token selects the code path these packages were built and tested for.
         let base = WKWebViewConfiguration()
         base.applicationNameForUserAgent = app.options.extensionUserAgentName ?? Self.extensionUserAgentName
+        // Extension pages (background, popup, options) use the tabs' store, like Chrome. Left at its
+        // default, the base configuration put them into WebKit's default store even in self tests and
+        // `--data-dir` profiles. A separate store is not an option: WebKit then never delivers
+        // runtime messages to the background service worker (measured: `sendMessage` from content
+        // script and popup resolves with `undefined`, `onMessage` never fires).
+        base.websiteDataStore = app.websiteDataStore
         config.webViewConfiguration = base
         return config
     }
@@ -102,12 +109,39 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
                 return result
             }
             grantRequested(ext, in: context)
+            await exemptFromTrackingPrevention(context)
             try controller.load(context)
             contexts.append(context)
         } catch {
             result.error = Self.describe(error)
         }
         return result
+    }
+
+    /// WebKit's tracking prevention (ITP) treats the extension's origin (`webkit-extension://<uuid>`)
+    /// like a website the user never interacted with and deletes its script-written storage. That
+    /// includes the background service worker's registration: WebKit terminates the worker seconds
+    /// after start (`deleteAndRestrictWebsiteDataForRegistrableDomains` → `SWServerRegistration::clear`
+    /// → `terminateWorker`) and never restarts it, so popups wait forever (Bitwarden: spinner) and
+    /// content scripts get no answer. Recording a user interaction for the origin before it loads
+    /// keeps ITP away from it while ITP keeps protecting web pages. WebKit SPI
+    /// (`-[WKWebsiteDataStore _logUserInteraction:completionHandler:]`), there is no public API;
+    /// repeated on every load and action click, so the interaction never expires.
+    @discardableResult
+    func exemptFromTrackingPrevention(_ context: WKWebExtensionContext) async -> Bool {
+        let store = app.websiteDataStore
+        let selector = NSSelectorFromString("_logUserInteraction:completionHandler:")
+        guard store.responds(to: selector), let method = class_getInstanceMethod(type(of: store), selector) else {
+            NSLog("NeuralBrowser: WebKit SPI _logUserInteraction missing; tracking prevention may stop extension backgrounds")
+            return false
+        }
+        typealias LogInteraction = @convention(c) (AnyObject, Selector, NSURL, @escaping @convention(block) () -> Void) -> Void
+        let call = unsafeBitCast(method_getImplementation(method), to: LogInteraction.self)
+        let url = context.baseURL as NSURL
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            call(store, selector, url) { c.resume() }
+        }
+        return true
     }
 
     // MARK: Installed extensions (enable, disable, remove, re-translate)
@@ -159,6 +193,10 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     private func userAllows(_ ext: WKWebExtension, id: String) -> Bool {
         let key = SettingKey.extensionGrant(id)
         if let saved = (try? app.store.getSetting(key: key)) ?? nil { return saved == "granted" }
+        if app.answersPromptsAutomatically { // scripted run on a throw-away profile: "Allow"
+            try? app.store.setSetting(key: key, value: "granted")
+            return true
+        }
         let perms = ext.requestedPermissions.map(\.rawValue).sorted()
         let hosts = ext.allRequestedMatchPatterns.map(\.string).sorted()
         let alert = NSAlert()
@@ -239,6 +277,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         guard let context = contexts.first(where: { $0.uniqueIdentifier == sender.identifier?.rawValue }) else { return }
         let window = sender.window?.windowController as? BrowserWindowController
         if let tab = window?.activeTab { context.userGesturePerformed(in: tab) }
+        Task { await exemptFromTrackingPrevention(context) } // a real interaction; also renews it
         context.performAction(for: window?.activeTab)
     }
 
@@ -318,7 +357,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     }
 
     private func ask(_ context: WKWebExtensionContext, _ text: String) -> Bool {
-        if app.isEphemeralProfile { return true } // self tests grant everything
+        if app.answersPromptsAutomatically { return true } // self tests grant everything
         let alert = NSAlert()
         alert.messageText = "“\(context.webExtension.displayName ?? "Extension")” \(text)"
         alert.addButton(withTitle: "Allow")

@@ -260,7 +260,7 @@ extension BrowserTab: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) {
-        if owner?.app.isEphemeralProfile ?? false { return completionHandler() } // self tests never block
+        if owner?.app.answersPromptsAutomatically ?? false { return completionHandler() } // self tests never block
         let alert = NSAlert()
         alert.messageText = frame.request.url?.host() ?? "Page"
         alert.informativeText = message
@@ -270,7 +270,7 @@ extension BrowserTab: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (Bool) -> Void) {
-        if owner?.app.isEphemeralProfile ?? false { return completionHandler(true) }
+        if owner?.app.answersPromptsAutomatically ?? false { return completionHandler(true) }
         let alert = NSAlert()
         alert.messageText = frame.request.url?.host() ?? "Page"
         alert.informativeText = message
@@ -282,7 +282,7 @@ extension BrowserTab: WKUIDelegate {
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
                  defaultText: String?, initiatedByFrame frame: WKFrameInfo,
                  completionHandler: @escaping @MainActor (String?) -> Void) {
-        if owner?.app.isEphemeralProfile ?? false { return completionHandler(defaultText) }
+        if owner?.app.answersPromptsAutomatically ?? false { return completionHandler(defaultText) }
         let alert = NSAlert()
         alert.messageText = prompt
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))

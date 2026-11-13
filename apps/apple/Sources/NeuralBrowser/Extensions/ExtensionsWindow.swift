@@ -117,9 +117,7 @@ enum ExtensionInstallFlow {
                     alert.addButton(withTitle: "Cancel")
                     guard alert.runModal() == .alertFirstButtonReturn else { return }
                     do {
-                        manager.unload(id: record.id) // an update replaces a loaded version
-                        try Installer.move(pending.appendingPathComponent(record.id), into: extensionsDir, id: record.id)
-                        manager.rememberGrant(id: record.id, granted: true)
+                        try commit(record, from: pending, manager: manager, extensionsDir: extensionsDir)
                         Task { await manager.setEnabled(true, id: record.id, in: extensionsDir) }
                     } catch {
                         let fail = NSAlert()
@@ -130,6 +128,17 @@ enum ExtensionInstallFlow {
                 }
             }
         }
+    }
+}
+
+extension ExtensionInstallFlow {
+    /// What "Install and Enable" does before loading: replace a loaded version, move the
+    /// unpacked package into place and remember the user's grant. Shared with `--ext-script`.
+    @MainActor
+    static func commit(_ record: InstallRecord, from pending: URL, manager: ExtensionManager, extensionsDir: URL) throws {
+        manager.unload(id: record.id) // an update replaces a loaded version
+        try Installer.move(pending.appendingPathComponent(record.id), into: extensionsDir, id: record.id)
+        manager.rememberGrant(id: record.id, granted: true)
     }
 }
 

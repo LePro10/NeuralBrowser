@@ -28,7 +28,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// True when nothing may be written to the user's real profile (self tests, reports).
+    /// A script in `--normal-mode` uses its own `--data-dir` like the normal app.
     var isEphemeralProfile: Bool {
+        switch options.mode {
+        case .normal: return false
+        case .extensionScript: return !scriptUsesProfile
+        default: return true
+        }
+    }
+
+    /// `--ext-script --normal-mode --data-dir DIR`: the script drives the normal app on a throw-away profile.
+    var scriptUsesProfile: Bool {
+        guard case .extensionScript = options.mode else { return false }
+        return options.scriptNormalMode && options.dataDirectory != nil
+    }
+
+    /// Self tests never wait for a person: JS dialogs and permission prompts are answered automatically.
+    var answersPromptsAutomatically: Bool {
         if case .normal = options.mode { return false }
         return true
     }
@@ -73,7 +89,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .extensionScript(let file):
             NSApp.setActivationPolicy(.regular)
             NSApp.mainMenu = MainMenu.build()
-            store = RustStore.inMemory()
+            if options.scriptNormalMode, options.dataDirectory == nil {
+                ExtensionReport.writeJSON(["ok": false, "error": "--normal-mode needs --data-dir (never the real profile)"])
+                exit(2)
+            }
+            store = scriptUsesProfile
+                ? RustStore(databaseURL: options.resolvedDataDirectory.appendingPathComponent("browser.sqlite"))
+                : RustStore.inMemory()
             let script = ExtensionScript(app: self, file: file)
             extensionScript = script
             script.run()

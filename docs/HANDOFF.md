@@ -25,13 +25,21 @@ https://github.com/LePro10/NeuralBrowser
    RAM-Anzeige pro Tab, heller Modus ansehen.
 3. Nutzer testet Bitwarden mit Vaultwarden-Login (Menü "Install Extension…", Paket aus
    den GitHub-Releases von `bitwarden/clients`): entsperren, ausfüllen, speichern.
-4. Erweiterungs-Tests mit entsperrtem Bildschirm wiederholen (siehe Risiken).
+4. Erweiterungs-Messungen aus ERWEITERUNGS-TEST.md Abschnitt 9, die am Nachmittag scheiterten,
+   mit dem ITP-Fix wiederholen (siehe Risiken).
 5. Lokaler Passwort-Speicher über den Schlüsselbund (Plan Phase 2), danach Sync (Phase 3).
 6. Skill `codemap` laufen lassen (viele neue Dateien).
 
 ## Offene Fehler / Risiken
-- Bei gesperrtem Bildschirm antworten Erweiterungs-Hintergründe nach wenigen Sekunden
-  nicht mehr (auch ohne Übersetzer). Ursache unklar.
+- Erweiterungs-Hintergründe, die nach wenigen Sekunden nicht mehr antworten (Bitwarden-Popup
+  mit Ladekreis): Ursache war WebKits Tracking-Schutz (ITP), nicht der gesperrte Bildschirm.
+  Behoben, indem die Erweiterungs-Herkunft als „vom Nutzer besucht“ vermerkt wird (WebKit-SPI
+  `_logUserInteraction:completionHandler:`; fehlt sie künftig, kehrt der Fehler zurück – Log-Zeile
+  „SPI _logUserInteraction missing“). Ein eigener Datenspeicher für Erweiterungsseiten ist keine
+  Alternative: dann stellt WebKit `runtime.sendMessage` nicht mehr an den Service Worker zu
+  (gemessen, Smoke-Test „no-reply“). Test: `apps/apple/scripts/ext-normal-test.sh`. Offen: Die
+  Basis-URL der Erweiterungen ist pro Start zufällig (Web-Speicher der Erweiterungsseiten überlebt
+  keinen Neustart, `chrome.storage` schon; jede Start-URL landet als eigene Domain in der ITP-Datenbank).
 - Ungeprüft: 15-Minuten-Timer der schlafenden Tabs, Wachhalten bei Ton/Video,
   Blockverhalten der Regel-Listen im echten WebView, Verhalten bei kaputter Datenbank,
   Verwaltungsansicht von Hand durchgeklickt.

@@ -180,14 +180,25 @@ Anker des Popovers. Mit altem Code schloss sich das Popover nach 344 ms; mit der
 werden an Ort und Stelle aktualisiert) blieb es in 3 von 3 Läufen ≥ 6 s offen.
 
 **Offen / Einschränkungen dieser Nachmessung:**
-- Ab etwa 14 Uhr lief der Rechner ohne Nutzer (gesperrter Bildschirm: `visibilityState` „hidden“,
-  `requestAnimationFrame` feuert nicht). In diesem Zustand antworteten die Hintergründe von
-  Bitwarden, Dark Reader, TWP und uBOL-Optionen wenige Sekunden nach dem Start nicht mehr
-  (Bitwarden: Herzschlag im Service Worker endet nach 4 s, keine CPU-Last, keine Antwort auf
-  Nachrichten); Popups zeigen dann nur „Loading“/Ladekreis. Das passierte **genauso mit den
-  unveränderten Paketen und mit einem Build des letzten Commits** (vor Übersetzer und App-Änderungen),
-  liegt also nicht am Übersetzer. Ein einfacher Test-Service-Worker blieb 20 s erreichbar. Ursache
-  nicht geklärt; bitte mit Mensch am Rechner wiederholen.
+- ~~Gesperrter Bildschirm als Ursache~~ **korrigiert (13.11.2026, Nachuntersuchung):** Die
+  Hintergründe hörten nicht wegen des gesperrten Bildschirms auf zu antworten. Ursache ist WebKits
+  Tracking-Schutz (ITP): Er behandelt die Herkunft einer Erweiterung (`webkit-extension://<uuid>`)
+  wie eine Website ohne Nutzer-Interaktion und löscht deren Skript-Speicher, damit auch die
+  Service-Worker-Registrierung des Hintergrunds (Log: `deleteAndRestrictWebsiteDataForRegistrableDomains`
+  → `SWServerRegistration::clear` → `SWContextManager::terminateWorker`, ca. 5 s nach Start). WebKit
+  startet den Hintergrund nicht neu; Popups bekommen „port is disconnected“ und zeigen nur den
+  Ladekreis. Das traf alle Erweiterungen gleich, auch unveränderte Pakete. Zusätzlich lagen die
+  Erweiterungsseiten wegen eines Konfigurationsfehlers auch in Selbsttests im **echten**
+  Standard-Datenspeicher; dessen ITP-Datenbank war seit dem Mittag „gealtert“ (100 von 122
+  Erweiterungs-Herkünften mit `dataRecordsRemoved` > 0). Behoben: eigener Datenspeicher für
+  Erweiterungsseiten im Speicher der Tabs; vor dem Laden und bei jedem Klick auf das Symbol wird für
+  die Erweiterungs-Herkunft eine Nutzer-Interaktion bei ITP vermerkt
+  (`ExtensionManager.exemptFromTrackingPrevention`), ITP bleibt für Websites an. (Ein erster Fix mit
+  eigenem Speicher ohne ITP brach die Nachrichten Content-Script → Hintergrund, siehe HANDOFF.) Nachweis
+  mit `apps/apple/scripts/ext-normal-test.sh` (Bitwarden mit eingespielter gealterter ITP-Datenbank:
+  nach Installation, Neustart und 3 min Popup mit Startseite, Autofill-Skript eingespritzt, Felder
+  `email,password` erkannt; ITP lief, löschte aber 0 Herkünfte). Die oben als „bei
+  gesperrtem Bildschirm“ markierten Messungen (Vimium `j` usw.) sollten neu gemessen werden.
 - Bitwarden: Entsperren, Ausfüllen, „Login speichern?“, Passkeys und Vaultwarden-Anmeldung brauchen
   ein Konto – nicht geprüft. Speichern der Server-Adresse nicht belegt.
 - uBOL „Complete“-Modus, Spiegel-Test und YouTube-Tests (SponsorBlock, RYD) wurden in der

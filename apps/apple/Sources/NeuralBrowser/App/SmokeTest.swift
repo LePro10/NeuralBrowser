@@ -108,8 +108,9 @@ final class SmokeTest {
 
     private func afterLoad() async {
         guard let first = window.tabs.first else { return }
+        var failures: [String] = []
         if let manager = app.extensionManager, !manager.contexts.isEmpty {
-            await probeExtensions(manager, tab: first)
+            failures = await probeExtensions(manager, tab: first)
         }
         if app.options.sleepTest, window.tabs.count > 1 {
             await testSleep()
@@ -125,7 +126,8 @@ final class SmokeTest {
         if let path = app.options.screenshotPath {
             await saveScreenshot(to: URL(fileURLWithPath: path))
         }
-        finish(ok: true, error: nil)
+        // Extension checks count: a loaded extension must really work, not just load.
+        finish(ok: failures.isEmpty, error: failures.isEmpty ? nil : failures.joined(separator: "; "))
     }
 
     /// Renders the window's views, then composites a WebKit snapshot of the page
@@ -150,7 +152,14 @@ final class SmokeTest {
 
     // MARK: Extension checks
 
-    private func probeExtensions(_ manager: ExtensionManager, tab: BrowserTab) async {
+    /// Returns what failed: load errors; for the test extension (content script that pings its
+    /// background) a missing content-script mark, a reply other than "pong" and a popup that did
+    /// not open or stayed empty. Other extensions (e.g. the real profile's) only count when they fail to load.
+    private func probeExtensions(_ manager: ExtensionManager, tab: BrowserTab) async -> [String] {
+        var failures: [String] = []
+        for case let ext as [String: Any] in report["extensions"] as? [Any] ?? [] where ext["loaded"] as? Bool != true {
+            failures.append("extension \(ext["folder"] ?? "?") not loaded: \(ext["error"] ?? "?")")
+        }
         // Content scripts run in an isolated world but share the DOM, so the page can see their marks.
         let js = """
             ({ title: document.title,
@@ -165,10 +174,17 @@ final class SmokeTest {
         }
         probe["contentScriptRan"] = probe["hello"] is String
         report["contentScript"] = probe
+        let pinger = manager.contexts.first { $0.webExtension.displayName == "Hello NeuralBrowser" }
+        if let pinger {
+            if !(probe["hello"] is String) { failures.append("content script of the test extension did not run") }
+            if pinger.webExtension.hasBackgroundContent, probe["background"] as? String != "pong" {
+                failures.append("background did not answer the content script: \(probe["background"] ?? "nothing")")
+            }
+        }
 
         // Popup: perform the action like a click would, wait for the delegate, read the popup's DOM.
         guard let context = manager.contexts.first(where: { $0.action(for: tab)?.presentsPopup == true }),
-              let action = context.action(for: tab) else { return }
+              let action = context.action(for: tab) else { return failures }
         var presented = false
         manager.onPopupPresented = { _, _ in presented = true }
         context.userGesturePerformed(in: tab)
@@ -187,6 +203,9 @@ final class SmokeTest {
         }
         report["popup"] = ["extension": context.webExtension.displayName ?? "?", "presented": presented, "text": text]
         action.closePopup()
+        // The text check knows only the test extension's popup (#out); others are reported, not judged.
+        if context === pinger, !presented || text is NSNull { failures.append("popup of the test extension not shown or empty") }
+        return failures
     }
 
     // MARK: Sleeping tabs

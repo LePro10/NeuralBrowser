@@ -12,6 +12,7 @@ import NeuralCore
 ///                 [--private] [--screenshot PNG] [--profile-dir DIR] [--store-bench]
 ///   NeuralBrowser --extension-report [--extensions-dir DIR]
 ///   NeuralBrowser --ext-script STEPS.json [--extensions-dir DIR] [--timeout SEC]
+///                 [--normal-mode --data-dir DIR]   (persistent profile, normal loading, see ExtensionScript)
 ///   NeuralBrowser --install-extension PATH [PATH ...] [--extensions-dir DIR]   (folder, .zip or .crx)
 ///   NeuralBrowser --retranslate-extensions [--extensions-dir DIR]
 struct LaunchOptions {
@@ -49,6 +50,9 @@ struct LaunchOptions {
     var extensionUserAgentName: String?
     /// Test knob: same for normal tabs.
     var tabUserAgentName: String?
+    /// `--ext-script` only: run like the normal app on `--data-dir` (persistent store, WebKit data
+    /// and extension storage, extensions loaded and granted the normal way) instead of in memory.
+    var scriptNormalMode = false
 
     static func parse(_ args: [String]) -> LaunchOptions {
         var o = LaunchOptions()
@@ -89,6 +93,7 @@ struct LaunchOptions {
             case "--private": o.privateWindow = true
             case "--extension-ua": o.extensionUserAgentName = value()
             case "--tab-ua": o.tabUserAgentName = value()
+            case "--normal-mode": o.scriptNormalMode = true
             default: break // ignore unknown (e.g. -NSDocumentRevisionsDebugMode)
             }
             i += 1

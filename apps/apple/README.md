@@ -93,6 +93,7 @@ cat > /tmp/dr.json <<'EOF'
 EOF
 $B --ext-script /tmp/dr.json --extensions-dir /tmp/exts --timeout 120
 # Test knobs: --extension-ua NAME / --tab-ua NAME replace the UA application name.
+# --normal-mode --data-dir DIR: run the script like the normal app on that profile (persistent).
 ```
 
 ## Extensions
@@ -116,6 +117,28 @@ A plain unpacked folder with `manifest.json` directly inside still loads as it i
 that was not installed through the dialog; the answer is remembered. Extension
 icons appear at the bottom of the sidebar; a click runs the action (popup shown
 as popover). Extensions are off in private windows.
+
+Along the user's path (started via LaunchServices like from Finder, persistent throw-away
+profile, package installed like File ▸ Install Extension…, local login page, real click on the
+sidebar button, app restart, wait, click again). Each round checks the popup text and a message
+content script → background (hello: "pong"; Bitwarden: background injects its autofill script,
+which then reports the login fields):
+
+```sh
+scripts/ext-normal-test.sh ~/Downloads/bitwarden-chrome-2026.10.2.zip bitwarden-password-manager "Log in" 3
+scripts/ext-normal-test.sh TestExtensions/hello hello-neuralbrowser "Active tab" 1
+# --ext-script can do the same by hand: --normal-mode --data-dir DIR, steps "install" and "clickAction".
+```
+
+Extension pages (background, popup, options) use the tabs' website data store. WebKit's tracking
+prevention (ITP) would treat an extension origin as a site without user interaction, delete its
+storage including the service-worker registration and so stop the background seconds after start
+(WebKit does not restart it; popups wait forever, content scripts get no answer). The app records a
+user interaction for the extension origin before loading it and on every action click (SPI
+`_logUserInteraction:completionHandler:`, no public API); ITP stays on for web pages. A separate
+store for extension pages does not work: WebKit then never delivers runtime messages to the
+background service worker. The smoke test fails when the test extension's background does not
+answer its content script.
 
 ```sh
 # Install / re-translate without UI (JSON on stdout), offline tests of installer and rules:
@@ -156,7 +179,7 @@ Sources/ExtensionTranslator/  Installer, ZipArchive (safe unpacking), Translator
                Compatibility (what will not work); Foundation only
 Tests/TranslatorSelfTest/     offline tests incl. malicious archives
 TestExtensions/hello/   MV3 test extension (content script, service worker, popup)
-scripts/                bundle.sh, run.sh
+scripts/                bundle.sh (APP=… builds elsewhere), run.sh, ext-normal-test.sh
 ```
 
 `BrowserStore` uses the core's value types directly. `RustStore` queues the frequent

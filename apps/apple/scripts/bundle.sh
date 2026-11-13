@@ -9,7 +9,7 @@
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIG="${CONFIG:-release}"
-APP="$ROOT/build/NeuralBrowser.app"
+APP="${APP:-$ROOT/build/NeuralBrowser.app}"  # APP=… builds a copy elsewhere
 VERSION="${VERSION:-0.1.0}"
 
 CORE="$ROOT/../../core"
