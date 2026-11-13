@@ -11,7 +11,12 @@ import WebKit
 enum ExtensionReport {
     static func run(directory: URL) {
         Task { @MainActor in
-            let controller = WKWebExtensionController(configuration: .nonPersistent())
+            let config = WKWebExtensionController.Configuration.nonPersistent()
+            config.defaultWebsiteDataStore = .nonPersistent()
+            let base = WKWebViewConfiguration()
+            base.applicationNameForUserAgent = ExtensionManager.extensionUserAgentName
+            config.webViewConfiguration = base
+            let controller = WKWebExtensionController(configuration: config)
             var entries: [[String: Any]] = []
             for folder in ExtensionManager.extensionFolders(in: directory) {
                 entries.append(await report(folder: folder, controller: controller))
@@ -50,13 +55,21 @@ enum ExtensionReport {
             entry["loaded"] = false
             entry["loadError"] = ExtensionManager.describe(error)
         }
+        FileHandle.standardError.write(Data("report: \(folder.lastPathComponent)\n".utf8))
         if ext.hasBackgroundContent, context.isLoaded {
-            do {
-                try await context.loadBackgroundContent()
-                entry["backgroundLoaded"] = true
-            } catch {
-                entry["backgroundLoaded"] = false
-                entry["backgroundError"] = ExtensionManager.describe(error)
+            // Some backgrounds never report back; give up after 20 s instead of hanging.
+            let error: String?? = await withCheckedContinuation { c in
+                var resumed = false
+                func resume(_ v: String??) { if !resumed { resumed = true; c.resume(returning: v) } }
+                context.loadBackgroundContent { e in
+                    MainActor.assumeIsolated { resume(.some(e.map(ExtensionManager.describe))) }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 20) { resume(nil) }
+            }
+            switch error {
+            case .none: entry["backgroundLoaded"] = false; entry["backgroundError"] = "no answer within 20 s"
+            case .some(.none): entry["backgroundLoaded"] = true
+            case .some(.some(let e)): entry["backgroundLoaded"] = false; entry["backgroundError"] = e
             }
         }
         entry["contextErrors"] = context.errors.map(ExtensionManager.describe)

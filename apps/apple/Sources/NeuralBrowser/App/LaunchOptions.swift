@@ -10,11 +10,14 @@ import Foundation
 ///   NeuralBrowser --smoke-test URL [URL ...] [--timeout SEC] [--hold SEC] [--sleep-test]
 ///                 [--private] [--screenshot PNG]
 ///   NeuralBrowser --extension-report [--extensions-dir DIR]
+///   NeuralBrowser --ext-script STEPS.json [--extensions-dir DIR] [--timeout SEC]
 struct LaunchOptions {
     enum Mode {
         case normal
         case smokeTest([URL])
         case extensionReport
+        /// Runs the steps of a JSON test script (see ExtensionScript.swift).
+        case extensionScript(URL)
     }
 
     var mode: Mode = .normal
@@ -29,6 +32,11 @@ struct LaunchOptions {
     var screenshotPath: String?
     /// Smoke test: use a private window (no history, no extensions).
     var privateWindow = false
+    /// Test knob: application name for the user agent of extension web views
+    /// (background, popup, options), e.g. to compare Safari and Chrome code paths.
+    var extensionUserAgentName: String?
+    /// Test knob: same for normal tabs.
+    var tabUserAgentName: String?
 
     static func parse(_ args: [String]) -> LaunchOptions {
         var o = LaunchOptions()
@@ -49,6 +57,7 @@ struct LaunchOptions {
                 }
                 o.mode = .smokeTest(urls)
             case "--extension-report": o.mode = .extensionReport
+            case "--ext-script": if let v = value() { o.mode = .extensionScript(URL(fileURLWithPath: v)) }
             case "--data-dir": if let v = value() { o.dataDirectory = URL(fileURLWithPath: v) }
             case "--extensions-dir": if let v = value() { o.extensionsDirectory = URL(fileURLWithPath: v) }
             case "--timeout": if let v = value(), let t = Double(v) { o.timeout = t }
@@ -56,6 +65,8 @@ struct LaunchOptions {
             case "--sleep-test": o.sleepTest = true
             case "--screenshot": o.screenshotPath = value()
             case "--private": o.privateWindow = true
+            case "--extension-ua": o.extensionUserAgentName = value()
+            case "--tab-ua": o.tabUserAgentName = value()
             default: break // ignore unknown (e.g. -NSDocumentRevisionsDebugMode)
             }
             i += 1
@@ -66,6 +77,17 @@ struct LaunchOptions {
     var resolvedDataDirectory: URL {
         dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("NeuralBrowser", isDirectory: true)
+    }
+
+    /// Stable UUID for a custom `--data-dir` (separate WebKit data and extension storage).
+    var profileIdentifier: UUID? {
+        guard let path = dataDirectory?.standardizedFileURL.path else { return nil }
+        var bytes = [UInt8](repeating: 0, count: 16)
+        for (i, b) in path.utf8.enumerated() { bytes[i % 16] = bytes[i % 16] &* 31 &+ b }
+        bytes[6] = (bytes[6] & 0x0F) | 0x40 // version 4 layout
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
     }
 
     var resolvedExtensionsDirectory: URL {

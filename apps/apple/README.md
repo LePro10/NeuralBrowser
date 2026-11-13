@@ -56,8 +56,27 @@ $B --smoke-test https://example.com --private
 $B --extension-report --extensions-dir ~/Library/Application\ Support/NeuralBrowser/Extensions
 ```
 
-The smoke test uses an in-memory store and non-persistent extension storage,
-so it never touches your profile.
+The smoke test uses an in-memory store, non-persistent extension storage and
+an in-memory website data store (cookies, caches), so it never touches your profile.
+`--data-dir DIR` also gets its own WebKit data store and extension storage.
+
+Scripted extension tests (`--ext-script`, same in-memory profile, every
+permission granted, JS dialogs auto-answered). Steps are documented at the top
+of `App/ExtensionScript.swift`; the report is JSON with one result per step:
+
+```sh
+cat > /tmp/dr.json <<'EOF'
+{"steps":[
+ {"open":"https://en.wikipedia.org/wiki/WebKit","wait":4},
+ {"eval":"return getComputedStyle(document.body).backgroundColor"},
+ {"popup":"darkreader"}, {"shot":"/tmp/popup.png","target":"popup:darkreader"},
+ {"open":"ext:darkreader/@options","newTab":true}, {"shot":"/tmp/options.png"},
+ {"keys":"f{Esc}"}, {"click":"a"}, {"errors":true}
+]}
+EOF
+$B --ext-script /tmp/dr.json --extensions-dir /tmp/exts --timeout 120
+# Test knobs: --extension-ua NAME / --tab-ua NAME replace the UA application name.
+```
 
 ## Extensions
 
@@ -73,6 +92,10 @@ Notes from testing:
   A completely unsigned binary is killed by the kernel on Apple Silicon.
 - WebKit silently ignores unknown permissions and manifest keys; the
   extension report lists them as `ignoredPermissions` / `unsupportedManifestKeys`.
+- Extension web views (background, popup, options) carry a Chrome token in the
+  user agent: the Chrome packages we load branch on it (Bitwarden crashes without
+  any browser token and spins at 100 % CPU waiting for its Safari app with a
+  Safari token). Full results: `docs/ERWEITERUNGS-TEST.md`.
 - Folders under `~/Documents`, `~/Desktop`, `~/Downloads` trigger a macOS
   privacy prompt when the app is started from Finder/`open`.
 

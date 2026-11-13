@@ -19,11 +19,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sessionWork: DispatchWorkItem?
     private var sleeper: TabSleeper?
     private var smokeTest: SmokeTest?
+    private var extensionScript: ExtensionScript?
     private var keyMonitor: Any?
 
     init(options: LaunchOptions) {
         self.options = options
     }
+
+    /// True when nothing may be written to the user's real profile (self tests, reports).
+    var isEphemeralProfile: Bool {
+        if case .normal = options.mode { return false }
+        return true
+    }
+
+    /// Cookies, caches and site storage of normal (non-private) tabs.
+    /// Self tests: in memory only. `--data-dir`: a separate store per directory,
+    /// so a throw-away profile never shares cookies with the real one.
+    private(set) lazy var websiteDataStore: WKWebsiteDataStore = {
+        if isEphemeralProfile { return .nonPersistent() }
+        if let id = options.profileIdentifier { return WKWebsiteDataStore(forIdentifier: id) }
+        return .default()
+    }()
 
     var primaryWindow: BrowserWindowController? { windows.first { !$0.isPrivate } }
 
@@ -48,6 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .extensionReport:
             NSApp.setActivationPolicy(.prohibited)
             ExtensionReport.run(directory: options.resolvedExtensionsDirectory)
+        case .extensionScript(let file):
+            NSApp.setActivationPolicy(.regular)
+            NSApp.mainMenu = MainMenu.build()
+            store = JSONBrowserStore(fileURL: nil)
+            let script = ExtensionScript(app: self, file: file)
+            extensionScript = script
+            script.run()
         }
     }
 

@@ -25,10 +25,33 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
 
     init(app: AppDelegate, persistent: Bool) {
         self.app = app
-        controller = WKWebExtensionController(configuration: persistent ? .default() : .nonPersistent())
+        controller = WKWebExtensionController(configuration: Self.configuration(app: app, persistent: persistent))
         super.init()
         controller.delegate = self
     }
+
+    /// Extension storage: in memory for self tests, per profile for `--data-dir`, else WebKit's default.
+    static func configuration(app: AppDelegate, persistent: Bool) -> WKWebExtensionController.Configuration {
+        let config: WKWebExtensionController.Configuration
+        if !persistent || app.isEphemeralProfile {
+            config = .nonPersistent()
+        } else if let id = app.options.profileIdentifier {
+            config = WKWebExtensionController.Configuration(identifier: id)
+        } else {
+            config = .default()
+        }
+        config.defaultWebsiteDataStore = app.websiteDataStore
+        // Base for the background, popup and options web views. We load Chrome packages, and
+        // they branch on navigator.userAgent: with no browser token Bitwarden crashes on start,
+        // with a Safari token it waits for its native Safari app and spins at 100 % CPU.
+        // A Chrome token selects the code path these packages were built and tested for.
+        let base = WKWebViewConfiguration()
+        base.applicationNameForUserAgent = app.options.extensionUserAgentName ?? Self.extensionUserAgentName
+        config.webViewConfiguration = base
+        return config
+    }
+
+    static let extensionUserAgentName = "Chrome/142.0.0.0 Safari/605.1.15"
 
     // MARK: Discovery and loading
 
@@ -254,7 +277,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     }
 
     private func ask(_ context: WKWebExtensionContext, _ text: String) -> Bool {
-        if case .smokeTest = app.options.mode { return true }
+        if app.isEphemeralProfile { return true } // self tests grant everything
         let alert = NSAlert()
         alert.messageText = "“\(context.webExtension.displayName ?? "Extension")” \(text)"
         alert.addButton(withTitle: "Allow")

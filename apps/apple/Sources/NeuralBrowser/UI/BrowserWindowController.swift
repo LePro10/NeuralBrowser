@@ -94,6 +94,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: Web views
 
+    /// Many sites (and extensions, in their background) gate features on a Safari-like UA token.
+    static let userAgentApplicationName = "Version/26.0 Safari/605.1.15"
+
     private func makeWebView(for url: URL?, configuration: WKWebViewConfiguration? = nil) -> WKWebView {
         let config: WKWebViewConfiguration
         if let configuration {
@@ -102,13 +105,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             config = ext // pages of an extension need that extension's configuration
         } else {
             config = WKWebViewConfiguration()
-            config.websiteDataStore = isPrivate ? privateDataStore : .default()
+            config.websiteDataStore = isPrivate ? privateDataStore : app.websiteDataStore
             if !isPrivate, let controller = app.extensionManager?.controller {
                 config.webExtensionController = controller
             }
             config.preferences.isElementFullscreenEnabled = true
             // Many sites gate features on a Safari-like UA token.
-            config.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
+            config.applicationNameForUserAgent = app.options.tabUserAgentName ?? Self.userAgentApplicationName
         }
         let webView = WKWebView(frame: webContainer.bounds, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
