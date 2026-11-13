@@ -12,6 +12,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/core/dist/apple"
 TARGETS=("aarch64-apple-darwin")
+# Match the app's minimum macOS (apps/apple/Package.swift); avoids linker version warnings.
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.4}"
 
 cd "$ROOT"
 for t in "${TARGETS[@]}"; do

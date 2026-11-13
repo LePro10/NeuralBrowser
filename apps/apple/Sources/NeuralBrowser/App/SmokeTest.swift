@@ -5,7 +5,7 @@
 import AppKit
 import WebKit
 
-/// `--smoke-test URL [URL …]`: opens a real browser window (in-memory store,
+/// `--smoke-test URL [URL …]`: opens a real browser window (in-memory store unless --profile-dir,
 /// non-persistent extension storage), loads all URLs, verifies extensions
 /// (content script, background reply, popup) and prints a JSON report.
 /// Exit code 0 on success, 1 on load error or timeout.
@@ -228,12 +228,24 @@ final class SmokeTest {
 
     private func finish(ok: Bool, error: String?) {
         guard !done else { return }
+        if app.options.storeBench, report["storeBench"] == nil {
+            Task { @MainActor in
+                self.report["storeBench"] = await StoreBench.run(on: self.app.store)
+                self.finish(ok: ok, error: error)
+            }
+            return
+        }
         done = true
         report["ok"] = ok
         report["error"] = error ?? NSNull()
         report["pid"] = Int(getpid())
         report["tabs"] = (window?.tabs ?? []).compactMap { tabResults[$0.id] }
         report["privateWindow"] = window?.isPrivate ?? false
+        if app.options.profileDirectory != nil, !(window?.isPrivate ?? true) {
+            // Throw-away profile: also store the session so a later normal start can restore it.
+            app.store.saveSession(tabs: window.sessionStates(), activeTabId: window.activeTab?.id)
+        }
+        app.store.flush()
         report["historyEntries"] = (try? app.store.recentHistory(limit: 1000).count) ?? 0
         report["downloads"] = app.downloads.items.map { item -> [String: Any] in
             let size = item.destination.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] }

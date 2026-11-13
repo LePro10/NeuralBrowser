@@ -39,12 +39,13 @@ Plain compiler, in a directory containing your `main.swift`:
 symbols work (`neural_core.swift` does `#if canImport(neural_coreFFI)`).
 No extra system libraries are needed (works with Swift language mode 5 and 6).
 
-SwiftPM (layout NOT yet verified, only the swiftc path above is): put the files in a package like this and it links the same way.
-
-    Sources/CNeuralCore/include/{neural_coreFFI.h, module.modulemap}   // C target (needs one empty .c file)
-    Sources/NeuralCore/neural_core.swift                               // Swift target depending on CNeuralCore
-    // plus, for  executable target:
-    linkerSettings: [.unsafeFlags(["-L", "<abs path>/core/dist/apple", "-lneural_core"])]
+SwiftPM (verified in `apps/apple`, see its `Package.swift`): a C target
+`CNeuralCore` (one empty .c file; `include/` holds symlinks to `neural_coreFFI.h`
+and `module.modulemap`), a Swift target `NeuralCore` (symlink to
+`neural_core.swift`, depends on CNeuralCore) and, on the executable target,
+`linkerSettings: [.unsafeFlags([<abs path>/libneural_core.a, "-Xlinker", "-w"])]`.
+`build-apple.sh` sets `MACOSX_DEPLOYMENT_TARGET=15.4`; the prebuilt Rust std objects
+still report a newer macOS, hence `-w` (silences only ld warnings).
 
 (Or a `.binaryTarget` XCFramework once `xcodebuild` is available; SwiftPM's
 `unsafeFlags` are allowed for root packages only.) The module name inside themodulemap must stay `neural_coreFFI`; the C target must be named so the module

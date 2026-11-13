@@ -4,11 +4,12 @@
 
 import Darwin
 import Foundation
+import NeuralCore
 
 /// Command-line options. Usage:
 ///   NeuralBrowser [--data-dir DIR] [--extensions-dir DIR]
 ///   NeuralBrowser --smoke-test URL [URL ...] [--timeout SEC] [--hold SEC] [--sleep-test]
-///                 [--private] [--screenshot PNG]
+///                 [--private] [--screenshot PNG] [--profile-dir DIR] [--store-bench]
 ///   NeuralBrowser --extension-report [--extensions-dir DIR]
 struct LaunchOptions {
     enum Mode {
@@ -27,6 +28,11 @@ struct LaunchOptions {
     var sleepTest = false
     /// Smoke test: write a PNG of the window (sidebar + page) to this path.
     var screenshotPath: String?
+    /// Smoke test: persist into DIR/browser.sqlite (a throw-away profile) instead of memory.
+    /// Without it the smoke test never writes to disk.
+    var profileDirectory: URL?
+    /// Smoke test: also time store calls (suggest, saveSession) on a seeded store.
+    var storeBench = false
     /// Smoke test: use a private window (no history, no extensions).
     var privateWindow = false
 
@@ -43,18 +49,20 @@ struct LaunchOptions {
                 var urls: [URL] = []
                 while i + 1 < args.count, !args[i + 1].hasPrefix("--") {
                     i += 1
-                    if let u = URL(string: InputResolver.resolve(args[i], searchTemplate: Defaults.searchTemplate)) {
+                    if let u = URL(string: resolveInput(text: args[i], searchTemplate: Defaults.searchTemplate)) {
                         urls.append(u)
                     }
                 }
                 o.mode = .smokeTest(urls)
             case "--extension-report": o.mode = .extensionReport
             case "--data-dir": if let v = value() { o.dataDirectory = URL(fileURLWithPath: v) }
+            case "--profile-dir": if let v = value() { o.profileDirectory = URL(fileURLWithPath: v) }
             case "--extensions-dir": if let v = value() { o.extensionsDirectory = URL(fileURLWithPath: v) }
             case "--timeout": if let v = value(), let t = Double(v) { o.timeout = t }
             case "--hold": if let v = value(), let t = Double(v) { o.hold = t }
             case "--sleep-test": o.sleepTest = true
             case "--screenshot": o.screenshotPath = value()
+            case "--store-bench": o.storeBench = true
             case "--private": o.privateWindow = true
             default: break // ignore unknown (e.g. -NSDocumentRevisionsDebugMode)
             }

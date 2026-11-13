@@ -11,7 +11,7 @@ import WebKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let options: LaunchOptions
     let processStart = processStartDate()
-    private(set) var store: BrowserStore = JSONBrowserStore(fileURL: nil)
+    private(set) var store: BrowserStore = RustStore.inMemory()
     private(set) var extensionManager: ExtensionManager?
     let downloads = DownloadManager()
     private(set) var windows: [BrowserWindowController] = []
@@ -41,7 +41,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .smokeTest(let urls):
             NSApp.setActivationPolicy(.regular)
             NSApp.mainMenu = MainMenu.build()
-            store = JSONBrowserStore(fileURL: nil)
+            // Self tests never touch the real profile: memory, or a throw-away --profile-dir.
+            if let dir = options.profileDirectory {
+                store = RustStore(databaseURL: dir.appendingPathComponent("browser.sqlite"))
+            } else {
+                store = RustStore.inMemory()
+            }
             let test = SmokeTest(app: self, urls: urls)
             smokeTest = test
             test.run()
@@ -56,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installKeyMonitor()
         downloads.onChange = { [weak self] in self?.windows.forEach { $0.refreshDownloads() } }
         let dataDir = options.resolvedDataDirectory
-        store = JSONBrowserStore(fileURL: dataDir.appendingPathComponent("store.json"))
+        store = RustStore(databaseURL: dataDir.appendingPathComponent("browser.sqlite"))
 
         // Creating the controller is cheap; loading extensions happens after the window is up.
         let extDir = options.resolvedExtensionsDirectory
@@ -68,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let session = try? store.loadSession(), !session.tabs.isEmpty {
             window.restore(session)
         }
+        NSLog("NeuralBrowser: profile %@, restored %d tab(s), %d history entries",
+              dataDir.path, window.tabs.count, (try? store.recentHistory(limit: 100000).count) ?? 0)
         window.showWindow(nil)
         NSApp.activate()
         if window.tabs.isEmpty { window.newTab(nil) }
@@ -157,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func saveSessionNow() {
         sessionWork?.cancel()
         guard case .normal = options.mode, let window = primaryWindow else { return }
-        try? store.saveSession(tabs: window.sessionStates(), activeTabId: window.activeTab?.id)
+        store.saveSession(tabs: window.sessionStates(), activeTabId: window.activeTab?.id)
     }
 
     // MARK: Recently closed

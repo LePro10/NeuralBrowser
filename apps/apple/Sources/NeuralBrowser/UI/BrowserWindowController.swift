@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import AppKit
+import NeuralCore
 import WebKit
 
 /// One browser window: sidebar with the tab list on the left, the active tab's
@@ -62,7 +63,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         contentArea.addSubview(webContainer)
         contentArea.addSubview(emptyLabel)
 
-        let guide = window.contentLayoutGuide as? NSLayoutGuide
         NSLayoutConstraint.activate([
             sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             sidebar.topAnchor.constraint(equalTo: root.topAnchor),
@@ -70,7 +70,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             sidebar.widthAnchor.constraint(equalToConstant: 240),
             contentArea.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             contentArea.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            contentArea.topAnchor.constraint(equalTo: guide?.topAnchor ?? root.topAnchor),
+            // Web content reaches the top window edge (titlebar is transparent, traffic lights sit over the sidebar).
+            contentArea.topAnchor.constraint(equalTo: root.topAnchor),
             contentArea.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             webContainer.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
             webContainer.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
@@ -205,7 +206,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         if tabs.isEmpty { window?.performClose(nil) }
     }
 
-    func restore(_ session: SessionState) {
+    func restore(_ session: Session) {
         for state in session.tabs.sorted(by: { $0.position < $1.position }) {
             let tab = BrowserTab(id: state.id, url: URL(string: state.url), title: state.title,
                                  pinned: state.pinned, lastActiveMs: state.lastActiveMs)
@@ -222,7 +223,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         tabs.enumerated().compactMap { i, t in
             guard let url = t.url?.absoluteString else { return nil }
             return TabState(id: t.id, url: url, title: t.title, pinned: t.pinned,
-                            position: i, lastActiveMs: t.lastActiveMs)
+                            position: UInt32(i), lastActiveMs: t.lastActiveMs)
         }
     }
 
@@ -246,12 +247,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     func tabTitleDidChange(_ tab: BrowserTab) {
         guard !isPrivate, let url = tab.url, url.scheme?.hasPrefix("http") == true else { return }
-        try? app.store.updateTitle(url: url.absoluteString, title: tab.title)
+        app.store.updateTitle(url: url.absoluteString, title: tab.title)
     }
 
     func tabDidCommit(_ tab: BrowserTab) {
         guard !isPrivate, let url = tab.url, url.scheme?.hasPrefix("http") == true else { return }
-        try? app.store.recordVisit(url: url.absoluteString, title: tab.webView?.title ?? "", timestampMs: nowMs())
+        app.store.recordVisit(url: url.absoluteString, title: tab.webView?.title ?? "", timestampMs: nowMs())
     }
 
     func tabDidFinishLoad(_ tab: BrowserTab) { onTabFinishedLoading?(tab) }
@@ -370,12 +371,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     // MARK: Command bar
 
     private func presentCommandBar(text: String, newTab: Bool) {
-        commandBar.provider = { [weak self] query in self?.commandItems(for: query) ?? [] }
+        commandBar.provider = { [weak self] query in self?.tabItems(for: query) ?? [] }
+        commandBar.asyncProvider = { [weak self] query, done in self?.storeItems(for: query, done: done) ?? done([]) }
         commandBar.onSubmit = { [weak self] item, text, newTab in self?.submitCommand(item, text: text, newTab: newTab) }
         commandBar.present(in: window!.contentView!, text: text, newTab: newTab)
     }
 
-    private func commandItems(for query: String) -> [CommandBarView.Item] {
+    private func tabItems(for query: String) -> [CommandBarView.Item] {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return [] }
         var items: [CommandBarView.Item] = []
@@ -387,14 +389,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             }
             if items.count >= 3 { break }
         }
-        if !isPrivate, let suggestions = try? app.store.suggest(query: q, limit: 8) {
-            for s in suggestions {
-                items.append(.init(title: s.title.isEmpty ? s.url : s.title, subtitle: s.url,
-                                   symbol: s.kind == .bookmark ? "bookmark" : "clock",
-                                   target: .url(s.url)))
-            }
-        }
         return items
+    }
+
+    /// History and bookmark suggestions come from the Rust core off the main thread.
+    private func storeItems(for query: String, done: @escaping ([CommandBarView.Item]) -> Void) {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !isPrivate, !q.isEmpty else { return done([]) }
+        app.store.suggest(query: q, limit: 8) { suggestions in
+            done(suggestions.map { s in
+                .init(title: s.title.isEmpty ? s.url : s.title, subtitle: s.url,
+                      symbol: s.kind == .bookmark ? "bookmark" : "clock", target: .url(s.url))
+            })
+        }
     }
 
     private func submitCommand(_ item: CommandBarView.Item?, text: String, newTab: Bool) {

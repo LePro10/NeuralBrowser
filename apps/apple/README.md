@@ -6,20 +6,30 @@ No third-party dependencies. License: MPL-2.0.
 
 ## Build and run
 
-Requires only the Command Line Tools (Swift 6, no Xcode).
+Requires only the Command Line Tools (Swift 6, no Xcode) and a Rust toolchain
+(cargo) for the core.
 
 ```sh
 cd apps/apple
-swift build -c release          # compile
-scripts/bundle.sh               # -> build/NeuralBrowser.app (Info.plist, ad-hoc signature)
+scripts/bundle.sh               # builds the Rust core if needed, then the app
+                                # -> build/NeuralBrowser.app (Info.plist, ad-hoc signature)
 scripts/run.sh                  # open the app (builds it if missing)
 scripts/run.sh --data-dir /tmp/nb-profile   # run with a throw-away profile
 ```
 
-Data lives in `~/Library/Application Support/NeuralBrowser/` (`store.json`,
-`Extensions/`). Override with `--data-dir DIR` and `--extensions-dir DIR`.
+The Rust core (`../../core`) is linked as a static library. `bundle.sh` runs
+`core/build-apple.sh` when `core/dist/apple/libneural_core.a` is missing or a
+Rust source/Cargo file is newer. A plain `swift build` needs that output to
+exist already (run `core/build-apple.sh` once). Package layout: `CNeuralCore`
+(C target; header and module map are symlinks into `core/dist/apple/`),
+`NeuralCore` (generated UniFFI Swift bindings, symlink) and the app target;
+the linker gets `core/dist/apple/libneural_core.a` via `unsafeFlags`
+(allowed for root packages). Nothing generated is checked in.
 
-Settings (no UI yet, stored in `store.json` → `settings`):
+Data lives in `~/Library/Application Support/NeuralBrowser/` (`browser.sqlite`
++ WAL files, `Extensions/`). Override with `--data-dir DIR` and `--extensions-dir DIR`.
+
+Settings (no UI yet, stored in the `settings` table of `browser.sqlite`):
 `search.template` (default `https://duckduckgo.com/?q=%s`),
 `tabs.sleepAfterMinutes` (default `15`, `0` = never).
 
@@ -46,6 +56,12 @@ B=build/NeuralBrowser.app/Contents/MacOS/NeuralBrowser
 
 # Load pages, print title + timings as JSON. Exit 0 = ok, 1 = load error/timeout.
 $B --smoke-test https://example.com
+# Throw-away profile instead of memory (history + session land in DIR/browser.sqlite;
+# start the app later with --data-dir DIR to see them restored).
+$B --smoke-test https://example.com https://example.org --profile-dir /tmp/nb-prof
+# Time store calls (suggest, saveSession) on a seeded store; adds "storeBench" to the report.
+$B --smoke-test https://example.com --store-bench --timeout 90
+
 # With the test extension: proves content script, background reply and popup ran.
 $B --smoke-test https://example.com --extensions-dir TestExtensions
 # More checks: sleeping tabs, private window, window screenshot, keep alive for RAM tools.
@@ -56,8 +72,8 @@ $B --smoke-test https://example.com --private
 $B --extension-report --extensions-dir ~/Library/Application\ Support/NeuralBrowser/Extensions
 ```
 
-The smoke test uses an in-memory store and non-persistent extension storage,
-so it never touches your profile.
+The smoke test uses an in-memory store (or the `--profile-dir` you give it) and
+non-persistent extension storage, so it never touches your real profile.
 
 ## Extensions
 
@@ -79,9 +95,11 @@ Notes from testing:
 ## Layout
 
 ```
+Sources/CNeuralCore/   C target: header + module map (symlinks), empty shim.c
+Sources/NeuralCore/    generated UniFFI bindings (symlink)
 Sources/NeuralBrowser/
   App/         main.swift, AppDelegate, MainMenu, LaunchOptions, SmokeTest
-  Store/       BrowserStore (protocol = Rust core API), JSONBrowserStore, InputResolver
+  Store/       BrowserStore (protocol over the Rust core API), RustStore (SQLite via UniFFI)
   Tabs/        BrowserTab (lazy WKWebView, navigation/UI delegates), TabSleeper, FaviconLoader
   UI/          BrowserWindowController, SidebarView, CommandBarView
   Features/    FindBarView, DownloadManager
@@ -91,5 +109,8 @@ TestExtensions/hello/   MV3 test extension (content script, service worker, popu
 scripts/                bundle.sh, run.sh
 ```
 
-`BrowserStore` mirrors the Rust core's API; `JSONBrowserStore` is the stand-in
-until the UniFFI bindings exist.
+`BrowserStore` uses the core's value types directly. `RustStore` queues the frequent
+writes (visits, titles, session) on a background queue and computes suggestions off
+the main thread; core errors are logged (`NSLog`) and never crash the app. If the
+database cannot be opened, the app falls back to an in-memory store. Private
+windows never call the store. Old `store.json` files are not migrated.

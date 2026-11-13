@@ -20,7 +20,11 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
         var target: Target
     }
 
+    /// Fast, synchronous items (open tabs); shown immediately.
     var provider: ((String) -> [Item])?
+    /// Slower items (history, bookmarks); delivered later on the main queue.
+    /// Results for an outdated query are dropped.
+    var asyncProvider: ((String, @escaping ([Item]) -> Void) -> Void)?
     var onSubmit: ((Item?, String, Bool) -> Void)?
 
     private let panel = NSVisualEffectView()
@@ -118,10 +122,25 @@ final class CommandBarView: NSView, NSTextFieldDelegate, NSTableViewDataSource, 
     }
 
     private func reloadItems() {
-        items = Array((provider?(field.stringValue) ?? []).prefix(maxRows))
+        let query = field.stringValue
+        let fast = provider?(query) ?? []
+        show(Array(fast.prefix(maxRows)), keepSelection: false)
+        asyncProvider?(query) { [weak self] extra in
+            guard let self, self.superview != nil, self.field.stringValue == query else { return }
+            self.show(Array((fast + extra).prefix(self.maxRows)), keepSelection: true)
+        }
+    }
+
+    private func show(_ newItems: [Item], keepSelection: Bool) {
+        let selected = keepSelection ? table.selectedRow : -1
+        items = newItems
         table.reloadData()
         tableHeight.constant = CGFloat(items.count) * (rowHeight + table.intercellSpacing.height)
-        if !items.isEmpty { table.selectRowIndexes([], byExtendingSelection: false) }
+        if selected >= 0, selected < items.count {
+            table.selectRowIndexes([selected], byExtendingSelection: false)
+        } else if !items.isEmpty {
+            table.selectRowIndexes([], byExtendingSelection: false)
+        }
     }
 
     private func submit() {
