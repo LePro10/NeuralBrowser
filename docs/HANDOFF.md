@@ -26,17 +26,30 @@ https://github.com/LePro10/NeuralBrowser
 2. Rest Phase 1: Oberfläche für Lesezeichen, Verlauf, Einstellungen (Suchmaschine),
    RAM-Anzeige pro Tab, heller Modus ansehen.
 3. **Vaultwarden fest einbauen** (Nutzer-Entscheidung 13.11.2026, hat Vorrang vor der
-   Bitwarden-Erweiterung): zuerst `docs/SECURITY.md` um den Baustein ergänzen, dann
-   Bibliothek wählen (Recherche unten), Kern-Modul in Rust, Oberfläche in Swift
-   (anmelden, entsperren, ausfüllen, speichern). Echte Anmeldung testet der Nutzer mit.
-   Unabhängig davon: Klick auf ein Erweiterungs-Symbol öffnet das Popup oft nicht
-   (vermutlich unsere App, `UI/SidebarView.swift` / Popover-Code) – beheben und testen.
+   Bitwarden-Erweiterung; Grundlage rbw-Code, MIT). Erledigt: `docs/SECURITY.md` 4.7,
+   `docs/NETZWERK.md`, Prüfung von rbw (siehe unten). **Als Nächstes: dem Nutzer den Aufbau
+   vorschlagen und freigeben lassen** (siehe „rbw als Bibliothek“), dann Kern-Modul in Rust,
+   Oberfläche in Swift (anmelden, entsperren, ausfüllen, speichern). Echte Anmeldung testet
+   der Nutzer mit; dafür braucht es seine Server-Adresse und ein Test-Konto.
+   Popup-Fehler der Erweiterungs-Symbole: Absicherung eingebaut (siehe Risiken), der Nutzer
+   muss im echten Gebrauch bestätigen, ob es jetzt zuverlässig öffnet.
 4. Erweiterungs-Messungen aus ERWEITERUNGS-TEST.md Abschnitt 9, die am Nachmittag scheiterten,
    mit dem ITP-Fix wiederholen (siehe Risiken).
 5. Lokaler Passwort-Speicher über den Schlüsselbund (Plan Phase 2), danach Sync (Phase 3).
 6. Skill `codemap` laufen lassen (viele neue Dateien).
 
 ## Offene Fehler / Risiken
+- **Popup öffnet oft nicht – eine Ursache gefunden und abgesichert (13.11.2026), im echten
+  Gebrauch noch nicht bestätigt:** WebKit zeigt ein Popup nur, wenn dessen Seite nach dem Klick
+  fertig lädt, und ignoriert weitere Klicks, solange es ein Popup für „offen oder unterwegs“
+  hält. Lädt die Popup-Seite einmal nicht fertig (oder war sie schon geladen), bleibt dieser
+  Zustand hängen; `closePopup()` setzt ihn im WebKit des Systems nicht zurück. Nachgestellt mit
+  `--ext-script` (`popupState` vor `clickAction`). Abhilfe in `ExtensionManager.actionClicked`:
+  nach 1,5 s ohne Popup wird die Popup-Seite neu geladen (WebKit zeigt sie dann selbst), nach
+  weiteren 3 s zeigen wir sie direkt; jeder Fall steht im Log („popup not presented“). Dazu
+  Klickfläche 28×24 statt 16×16 pt, Fehler an WebKit, wenn kein Fenster da ist, und ein Klick
+  aufs Symbol bei offenem Popup schließt es nur noch (letzteres nicht mit echter Maus geprüft).
+  Warum die Popup-Seite beim Nutzer nicht fertig lädt, ist weiter offen.
 - **Bitwarden im echten Gebrauch unzuverlässig (Nutzer, 13.11.2026, nach dem ITP-Fix):**
   Klick auf das Symbol öffnet das Popup oft nicht (einmal bei rund 10 Klicks); nach Eingabe
   des Master-Passworts bleibt die Anmeldung hängen, obwohl die Login-Mail des Servers ankam;
@@ -70,6 +83,22 @@ https://github.com/LePro10/NeuralBrowser
 - Git-Identität lokal: GitHub-noreply-Adresse. Parallel-Agents über `git worktree` unter
   `.worktrees/` (automatische Worktree-Isolation funktioniert in dieser Umgebung nicht).
 - Es fehlen Xcode und rustup: nötig für iOS, Android und Notarisieren.
+
+## rbw als Bibliothek (geprüft 13.11.2026, Quelltext 1.15.0, Commit 77464d4)
+- rbw hat eine Bibliotheks-Schnittstelle (`src/lib.rs`, alle Module `pub`). Als Abhängigkeit
+  taugt das Crate trotzdem nicht: es zieht `axum`, `clap`, `daemonize`, `ssh-agent-lib`,
+  `tokio` (full), `arboard` und Unix-only-Crates mit; `actions.rs` liest fest die
+  Konfigurationsdatei unter `~/.config/rbw`.
+- Brauchbar und klein: `cipherstring.rs` (315 Zeilen), `identity.rs` (94), `locked.rs` (165),
+  `base64.rs` – reine RustCrypto-Aufrufe, kein Netz, keine Konfiguration. `api.rs` (1768) hat
+  die Anfrage-/Antwort-Formate (prelogin, login mit Zwei-Faktor, sync, add, edit, Token
+  erneuern); `Client::new(base_url, identity_url, ui_url, cert)` nimmt die Adressen direkt,
+  hängt aber an `reqwest`, `tokio` und `axum` (SSO-Rückruf).
+- Vorschlag (noch nicht freigegeben): neues Crate `core/neural-vault`; die drei
+  Krypto-Module mit MIT-Hinweis unverändert übernehmen; die Formate aus `api.rs` übernehmen,
+  aber ohne eigenen HTTP-Client: der Kern baut Anfragen und liest Antworten, die Hülle sendet
+  sie (URLSession; Zertifikate, Proxy und VPN des Systems, kein `reqwest`/`rustls` in der App).
+  Alternative: `ureq`/`reqwest` im Kern (ein Code für alle Plattformen, App wird größer).
 
 ## Recherche: Bibliothek für die Vaultwarden-Anbindung (13.11.2026, Haiku-Recherche)
 Es gibt keine fertige, sauber lizenzierte Bibliothek. Kandidaten:

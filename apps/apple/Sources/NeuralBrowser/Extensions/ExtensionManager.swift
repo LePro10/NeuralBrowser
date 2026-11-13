@@ -24,6 +24,10 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     private(set) var contexts: [WKWebExtensionContext] = []
 
     /// Smoke-test hook: called when an action popup is presented.
+    /// Per extension: number of popup requests and answers (a watchdog acts only on its own click).
+    private var popupAttempt: [String: Int] = [:]
+    private var popupClosedAt: [String: Date] = [:]
+    private var popupCloseObservers: [String: NSObjectProtocol] = [:]
     var onPopupPresented: ((WKWebExtension.Action, WKWebExtensionContext) -> Void)?
 
     init(app: AppDelegate, persistent: Bool) {
@@ -261,6 +265,9 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
                 ?? NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil)!
             let button = NSButton(image: image, target: self, action: #selector(actionClicked(_:)))
             button.isBordered = false
+            // A bare 16 pt icon is easy to miss; the whole 28 x 24 pt area takes the click.
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 28).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 24).isActive = true
             button.identifier = NSUserInterfaceItemIdentifier(context.uniqueIdentifier)
             button.toolTip = action?.label ?? context.webExtension.displayName
             if let badge = action?.badgeText, !badge.isEmpty {
@@ -275,10 +282,55 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
 
     @objc private func actionClicked(_ sender: NSButton) {
         guard let context = contexts.first(where: { $0.uniqueIdentifier == sender.identifier?.rawValue }) else { return }
+        let id = context.uniqueIdentifier
+        // The click that closes an open popup (a popover closes on mouse-down outside of it)
+        // must not open it again right away.
+        if let closed = popupClosedAt[id], Date().timeIntervalSince(closed) < 0.4 { return }
         let window = sender.window?.windowController as? BrowserWindowController
-        if let tab = window?.activeTab { context.userGesturePerformed(in: tab) }
+        let tab = window?.activeTab
+        if let tab { context.userGesturePerformed(in: tab) }
         Task { await exemptFromTrackingPrevention(context) } // a real interaction; also renews it
-        context.performAction(for: window?.activeTab)
+        popupAttempt[id] = (popupAttempt[id] ?? 0) + 1
+        let attempt = popupAttempt[id]
+        context.performAction(for: tab)
+        guard context.action(for: tab)?.presentsPopup == true else { return }
+        // WebKit shows a popup only when its page finishes loading after the click, and ignores
+        // clicks while it believes a popup is open or on its way. A popup page that failed to load,
+        // or was loaded before the click, therefore never appears and blocks every later click
+        // (the system's WebKit does not reset that state in `closePopup`). Loading the page again
+        // makes WebKit present it; if even that fails, show what there is.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak context, weak tab] in
+            guard let self, let context, self.popupAttempt[id] == attempt,
+                  let action = context.action(for: tab) else { return }
+            let webView = action.popupWebView
+            NSLog("NeuralBrowser: extension %@: popup not presented 1.5 s after the click (loading %d, url %@), reloading it",
+                  id, webView?.isLoading == true ? 1 : 0, webView?.url?.absoluteString ?? "-")
+            if webView?.isLoading != true { webView?.reload() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self, weak context] in
+                guard let self, let context, self.popupAttempt[id] == attempt else { return }
+                NSLog("NeuralBrowser: extension %@: popup still not presented, showing it anyway", id)
+                self.showPopup(of: action, for: context)
+            }
+        }
+    }
+
+    /// Shows the action's popover at its sidebar button. False when there is nothing to show it on.
+    @discardableResult
+    private func showPopup(of action: WKWebExtension.Action, for context: WKWebExtensionContext) -> Bool {
+        let id = context.uniqueIdentifier
+        popupAttempt[id] = (popupAttempt[id] ?? 0) + 1 // answered: stops the watchdog of the click
+        let window = (action.associatedTab as? BrowserTab)?.owner ?? app.keyBrowserWindow
+        guard let popover = action.popupPopover,
+              let anchor = window?.extensionButton(for: context) ?? window?.window?.contentView,
+              anchor.window != nil else { return false }
+        if let old = popupCloseObservers[id] { NotificationCenter.default.removeObserver(old) }
+        popupCloseObservers[id] = NotificationCenter.default.addObserver(
+            forName: NSPopover.willCloseNotification, object: popover, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.popupClosedAt[id] = Date() }
+        }
+        if !popover.isShown { popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY) }
+        return true
     }
 
     // MARK: WKWebExtensionControllerDelegate
@@ -373,10 +425,12 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     func webExtensionController(_ controller: WKWebExtensionController, presentActionPopup action: WKWebExtension.Action,
                                 for context: WKWebExtensionContext,
                                 completionHandler: @escaping ((any Error)?) -> Void) {
-        guard let popover = action.popupPopover else { return completionHandler(nil) }
-        let window = (action.associatedTab as? BrowserTab)?.owner ?? app.keyBrowserWindow
-        if let anchor = window?.extensionButton(for: context) ?? window?.window?.contentView {
-            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+        guard showPopup(of: action, for: context) else {
+            // Tell WebKit, otherwise it believes the popup is open and ignores every later click.
+            NSLog("NeuralBrowser: extension %@: no place to show the popup", context.uniqueIdentifier)
+            return completionHandler(NSError(domain: "NeuralBrowser", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "No window to present the popup in",
+            ]))
         }
         onPopupPresented?(action, context)
         completionHandler(nil)

@@ -134,6 +134,34 @@ für Gerätegruppen und Schlüsselwechsel MLS (RFC 9420, z. B. OpenMLS), für da
 | Gekaperter CI-Build | GitHub Actions auf feste Commit-Hashes gepinnt; minimale Token-Rechte; Build-Herkunft per Attestation [prüfen] | Kompromittierter GitHub-Account |
 | Nicht nachprüfbarer Build | Reproduzierbare Builds als Ziel für den Rust-Kern und den Sync-Server (Docker-Abbild); für die signierte macOS-App schwierig [prüfen] | Nutzer müssen dem Build vertrauen |
 
+### 4.7 Eingebaute Vaultwarden-/Bitwarden-Anbindung
+
+Entscheidung 13.11.2026: fester Baustein statt Erweiterung, Grundlage ist der Code von `rbw` (MIT).
+Die Kryptografie-Teile von rbw (`cipherstring`, `identity`, `locked`: Schlüsselableitung mit
+PBKDF2/Argon2id und HKDF, AES-256-CBC mit HMAC-SHA256, RSA-OAEP; alles RustCrypto-Crates) werden
+unverändert übernommen, nicht neu geschrieben. Das Protokoll gibt der Server vor; wir erfinden
+nichts dazu. Weder rbw noch die RustCrypto-Crates `aes`/`cbc`/`rsa` haben eine für uns belegte
+unabhängige Prüfung [prüfen]; `rsa` hat eine bekannte Timing-Schwäche (RUSTSEC-2023-0071, Marvin),
+die nur einen Angreifer betrifft, der Entschlüsselungszeiten messen kann.
+
+Geheimnisse und wo sie liegen: Master-Passwort nur während der Eingabe im Speicher, nie gespeichert;
+abgeleitete Schlüssel und entschlüsselte Einträge nur im Speicher des Kerns (gesperrte Seiten,
+`zeroize`), weg beim Sperren und Beenden; Refresh-Token und Geräte-Kennung im Schlüsselbund;
+der verschlüsselte Tresor-Stand des Servers darf als Datei im Profil liegen (ohne Schlüssel wertlos).
+
+| Bedrohung | Gegenmaßnahme | Restrisiko |
+|---|---|---|
+| Falscher oder abgehörter Server | Server-Adresse nur `https://`, normale Zertifikatsprüfung des Systems, kein „trotzdem verbinden“; Adresse wird beim Anmelden voll angezeigt | Nutzer trägt eine falsche Adresse ein; ein falscher Server sieht den Master-Passwort-Hash (nicht das Passwort) |
+| Server senkt die KDF-Stärke (Prelogin ist nicht authentifiziert) | Untergrenzen im Kern: PBKDF2 mindestens 600.000 Runden (Wert des Servers darunter: Warnung und Abbruch, Ausnahme nur nach ausdrücklicher Bestätigung), Argon2id mindestens 19 MiB/2 Runden | Altes Konto mit schwacher Einstellung muss am Server angehoben werden |
+| Gehackter Server liefert veränderte Einträge | Jeder Eintrag wird vor dem Entschlüsseln per HMAC geprüft; Einträge ohne MAC (alter Typ 0/1) werden abgelehnt | Server kann Einträge weglassen, vertauschen (URL und Passwort sind getrennt verschlüsselt) oder alte Stände liefern; Organisations-Schlüssel sind nicht an den Nutzer gebunden – Schwäche des Protokolls |
+| Phishing, fremde Frames, unsichtbare Felder | Alle Regeln aus 4.3 gelten unverändert; Abgleich Eintrag ↔ Seite standardmäßig über den Host (exakt), „Basis-Domain“ nur mit Liste öffentlicher Suffixe, Regex/„beginnt mit“ aus dem Tresor werden zunächst nicht unterstützt | wie 4.3 |
+| Seite oder Erweiterung erreicht den Tresor | Kein JS-Zugang: Tresor lebt im Kern, die Hülle schreibt nur das gewählte Feld; keine Brücke, keine Erweiterungs-API, kein MCP-Werkzeug liest Einträge | Seiten-JS liest das Feld nach dem Ausfüllen (unvermeidbar) |
+| Anderer Prozess liest den Speicher oder das Refresh-Token | Schlüssel in gesperrten, nicht ausgelagerten Seiten; Refresh-Token im Schlüsselbund mit den Regeln aus 4.3; Hardened Runtime ohne Debug-Recht in signierten Builds | Prozess desselben Nutzers bei Entwickler-Builds; Nicht-Ziel 1 |
+| Entsperrtes, unbeaufsichtigtes Gerät | Automatisches Sperren nach Ruhezeit (Standard 15 Minuten), beim Sperren des Bildschirms und beim Beenden; Entsperren nur mit Master-Passwort (Touch ID erst, wenn die Schlüsselbund-Regeln aus Phase 2 geklärt sind) | Angreifer handelt innerhalb der Ruhezeit |
+| Geheimnisse in Logs, Fehlermeldungen, Absturzberichten | Regel 3; Fehler des Servers werden ohne Anfrage-Inhalt weitergegeben; Tests nur gegen Wegwerf-Konten, nie mit echten Zugangsdaten im Repo | Speicherabbild bei Absturz enthält entsperrte Schlüssel |
+| Zwei-Faktor wird umgangen oder abgefangen | Zwei-Faktor macht der Server; unterstützt werden App-Code und E-Mail-Code, „dieses Gerät merken“ ist zunächst aus | Kein FIDO2/Passkey in der ersten Fassung |
+| Speichern überschreibt oder verliert Einträge | Neuer Eintrag nur nach Bestätigung in der Hülle; Ändern lädt vorher den aktuellen Stand; nie stilles Überschreiben | Gleichzeitige Änderung auf zwei Geräten |
+
 ## 5. Ausdrückliche Nicht-Ziele
 
 1. Kein Schutz gegen Angreifer mit Admin-Rechten oder Schadsoftware, die als Nutzer schon läuft und den Schlüsselbund entsperrt nutzt.
@@ -142,7 +170,7 @@ für Gerätegruppen und Schlüsselwechsel MLS (RFC 9420, z. B. OpenMLS), für da
 4. Keine Anonymität wie bei Tor; kein Schutz vor Fingerprinting über das hinaus, was WebKit bietet.
 5. Kein Schutz vor Erweiterungen, denen der Nutzer weite Rechte gegeben hat; keine Code-Prüfung fremder Erweiterungen.
 6. Der Sync-Server muss nicht verfügbar sein; er kann Daten löschen oder zurückhalten.
-7. Kein Schutz für Bitwarden, 1Password und andere Passwort-Erweiterungen über das Erweiterungs-Modell hinaus.
+7. Kein Schutz für Bitwarden, 1Password und andere Passwort-Erweiterungen über das Erweiterungs-Modell hinaus. Die eingebaute Vaultwarden-Anbindung (4.7) ist davon getrennt.
 8. Kein Schutz vor Nutzern, die Warnungen bewusst wegklicken.
 
 ## 6. Verbindliche Regeln für alle Beiträge
@@ -175,6 +203,7 @@ Jede Regel ist im Review oder automatisch prüfbar. Ausnahmen nur mit Eintrag in
 | 1 | Welche Filterlisten und Scriptlets sind erlaubt, wie werden Listen-Updates geprüft? |
 | 2 | Woher kommen Erweiterungs-Updates und gibt es eine prüfbare Signatur? Entpackte Pakete bekommen sonst keine Sicherheits-Updates. |
 | 2 | Genaue Schlüsselbund-Regeln: Bindung an die App-Signatur, Touch ID, Verhalten bei Entwickler-Builds, Linux/Windows-Gegenstücke. |
+| 2 | Vaultwarden (4.7): Wer macht die HTTPS-Anfragen (Kern oder Hülle)? Gibt es eine veröffentlichte Prüfung der genutzten RustCrypto-Crates? Wie wird die Liste öffentlicher Suffixe aktuell gehalten? Verhalten bei Schlüssel-Rotation und Konto-Verschlüsselung v2 des Servers. |
 | 3 | Wahl der Krypto-Bausteine und des Koppel-Verfahrens (PAKE vs. QR mit Einmal-Kanal); Schlüsselwechsel beim Entfernen eines Geräts; Schutz gegen Zurückspielen. |
 | 3 | Welche Metadaten lassen sich mit vertretbarem Aufwand verringern (Auffüllen, gemeinsame Tabelle für alle Typen)? |
 | 4 | Ablage und Ersatz des Update-Signatur-Schlüssels; Kontaktadresse; Release-Prozess bei Lücken. |
