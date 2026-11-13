@@ -24,7 +24,13 @@ if [ ! -f "$LIB" ] || [ ! -f "$CORE/dist/apple/neural_core.swift" ] || \
 fi
 
 cd "$ROOT"
-swift build -c "$CONFIG" 2>&1 | grep -E "error|warning:|Compiling|Build complete" | grep -v "^\[" || true
+# A failed build must stop here, otherwise the old binary would be bundled.
+if ! swift build -c "$CONFIG" > /tmp/neural-swift-build.log 2>&1; then
+  grep -E "error" /tmp/neural-swift-build.log | head -20 >&2
+  echo "swift build failed (full log: /tmp/neural-swift-build.log)" >&2
+  exit 1
+fi
+grep -E "warning:|Build complete" /tmp/neural-swift-build.log | grep -v "^\[" || true
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/NeuralBrowser"
 [ -x "$BIN" ] || { echo "build failed: $BIN missing" >&2; exit 1; }
 

@@ -236,7 +236,8 @@ extension BrowserTab: WKNavigationDelegate {
                 let iconURL = (value as? String).flatMap(URL.init(string:))
                     ?? URL(string: "/favicon.ico", relativeTo: pageURL)?.absoluteURL
                 guard let self, let iconURL else { return }
-                FaviconLoader.shared.load(iconURL, ephemeral: self.owner?.isPrivate ?? true) { image in
+                let ephemeral = (self.owner?.isPrivate ?? true) || (self.owner?.app.isEphemeralProfile ?? true)
+                FaviconLoader.shared.load(iconURL, ephemeral: ephemeral) { image in
                     self.applyFavicon(image)
                 }
             }
@@ -259,6 +260,7 @@ extension BrowserTab: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) {
+        if owner?.app.isEphemeralProfile ?? false { return completionHandler() } // self tests never block
         let alert = NSAlert()
         alert.messageText = frame.request.url?.host() ?? "Page"
         alert.informativeText = message
@@ -268,6 +270,7 @@ extension BrowserTab: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (Bool) -> Void) {
+        if owner?.app.isEphemeralProfile ?? false { return completionHandler(true) }
         let alert = NSAlert()
         alert.messageText = frame.request.url?.host() ?? "Page"
         alert.informativeText = message
@@ -279,6 +282,7 @@ extension BrowserTab: WKUIDelegate {
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
                  defaultText: String?, initiatedByFrame frame: WKFrameInfo,
                  completionHandler: @escaping @MainActor (String?) -> Void) {
+        if owner?.app.isEphemeralProfile ?? false { return completionHandler(defaultText) }
         let alert = NSAlert()
         alert.messageText = prompt
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
