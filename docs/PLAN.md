@@ -130,8 +130,14 @@ Erweiterungen standardmäßig aus.
 
 ### 4.4 Passwörter
 
-- **Mit Erweiterung:** Bitwarden (auch mit Vaultwarden-Server), 1Password und andere
-  laufen als normale Erweiterung. Das ist Testfall Nummer eins in Phase 0.
+- **Eingebaute Vaultwarden-/Bitwarden-Anbindung (entschieden am 13.11.2026):** Der
+  Browser spricht selbst mit dem Server: anmelden, entsperren, ausfüllen, speichern.
+  Grund: Bitwarden als Chrome-Erweiterung lief im echten Gebrauch auf WebKit nicht
+  zuverlässig (Popup öffnet oft nicht, Anmeldung hängt). Aufbau auf einer bestehenden,
+  verbreiteten Rust-Bibliothek, keine eigene Kryptografie; Auswahl und Lizenzprüfung
+  stehen in `docs/HANDOFF.md`. Vor dem Bau wird `docs/SECURITY.md` um diesen Baustein
+  ergänzt.
+- **Passwort-Erweiterungen** bleiben möglich, aber ohne Zusage, dass sie laufen.
 - **Ohne Erweiterung:** eingebauter lokaler Speicher. Die Passwörter liegen im
   System-Schlüsselbund (macOS Schlüsselbund, Windows Anmeldeinformationen, Linux Secret
   Service), entsperrt per Touch ID oder Gerätepasswort. Der Browser erfindet keine
