@@ -1,0 +1,15 @@
+[package]
+name = "neural_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NeuralBrowser platform-independent core (storage, input resolution)"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+uniffi = { workspace = true }
+rusqlite = { version = "0.42", features = ["bundled"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }

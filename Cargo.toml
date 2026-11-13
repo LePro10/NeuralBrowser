@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["core/neural-core", "core/uniffi-bindgen"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+
+[workspace.dependencies]
+uniffi = "0.32.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -116,7 +116,8 @@ neuralbrowser/
    lokalen Ordnern [belegt], Android nur mit GeckoView und von Mozilla signiert [belegt],
    Linux (WebKitGTK) nur lückenhaft [belegt].
 3. **Neue Art:** MCP-Server und kleine Plugins mit festen Rechten, die auch ein Agent
-   schreiben kann.
+   schreiben kann. Installiert wird nie automatisch: Ein Mensch sieht vorher Code und
+   Rechte. Für Userscripts gelten dieselben Regeln wie für Erweiterungen.
 
 **Sicherheit bei Erweiterungen:** Rechte werden vor der Installation klar angezeigt, bei
 Updates nur die neu verlangten Rechte. Im Agenten-Profil und in privaten Fenstern sind
@@ -144,9 +145,15 @@ Erweiterungen standardmäßig aus.
   Servers ein.
 - **Sync-Server:** ein einzelnes Rust-Programm plus Docker-Abbild, so einfach wie
   Vaultwarden. Er speichert nur verschlüsselte Pakete und kennt keine Inhalte.
-- Verschlüsselung auf dem Gerät mit fertigen, geprüften Bibliotheken. Neue Geräte werden
-  per QR-Code gekoppelt, der den Schlüssel überträgt. Kein Konto, kein Passwort beim
-  Server, nur Geräte-Kennungen.
+- Verschlüsselung auf dem Gerät mit fertigen, geprüften Bibliotheken. Kein Konto und
+  kein Passwort beim Server.
+- Koppeln: Der QR-Code startet einen kurzlebigen Koppel-Vorgang mit Vergleichscode auf
+  beiden Geräten. Er überträgt nicht den Dauerschlüssel. Jedes Gerät hat ein eigenes
+  Schlüsselpaar.
+- Wird ein Gerät entfernt, wechselt der Schlüssel. Der Server kann keine alten Stände
+  unbemerkt zurückspielen.
+- Sicherheits-Einstellungen (Agenten-Rechte, MCP, Erweiterungen) werden nicht
+  synchronisiert.
 - Konflikte: pro Eintrag gewinnt die letzte Änderung, Löschungen werden gemerkt.
 - Dazu Export und Import als Datei (auch Lesezeichen aus Chrome, Firefox, Safari).
 
@@ -156,12 +163,16 @@ Der Browser läuft vollständig ohne KI. Sie ist standardmäßig aus und mit ein
 ganz entfernbar.
 
 - **Agenten-Steuerung über MCP:** Werkzeuge wie Tabs auflisten, Seite öffnen, lesen,
-  klicken, tippen, Verlauf durchsuchen. Nur lokal erreichbar.
+  klicken, tippen, Verlauf durchsuchen. Nur lokal, ohne offenen Netzwerk-Port, mit
+  einem eigenen Zugangs-Token pro Programm, das den Browser steuern darf.
 - **Sparsames Seiten-Abbild:** statt rohem HTML ein gekürzter Baum aus sichtbaren,
   bedienbaren Elementen. Ziel: wenige tausend Token pro Seite. Das macht Agenten
   schneller, billiger und zuverlässiger.
 - **Rechte pro Website:** "nie", "nur lesen", "bedienen mit Nachfrage", "frei". Bank,
-  Mail und Zahlungsseiten stehen standardmäßig auf "nie".
+  Mail und Zahlungsseiten stehen standardmäßig auf "nie", unbekannte Seiten auf
+  "nur lesen".
+- **Kein stiller Datenfluss:** Was der Agent auf einer Website gelesen hat, geht nur mit
+  Nachfrage an eine andere Website.
 - **Eigenes Agenten-Profil** ohne deine Logins. Zugriff auf eine eingeloggte Seite gibst
   du einzeln frei.
 - **Bestätigung bei Folgen:** Absenden, Kaufen, Nachrichten schicken, Herunterladen.
