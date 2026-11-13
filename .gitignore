@@ -1,0 +1,8 @@
+target/
+.build/
+*.xcframework/
+core/dist/
+apps/apple/build/
+.DS_Store
+*.swp
+.env
