@@ -21,9 +21,24 @@ let package = Package(
             path: "Sources/NeuralCore",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Extension installer and translator: Foundation only, no Rust core, so its
+        // self test (`swift run translator-selftest`) builds and runs on its own.
+        .target(
+            name: "ExtensionTranslator",
+            path: "Sources/ExtensionTranslator",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        // Offline tests for the installer and the translator rules (XCTest and
+        // swift-testing are not usable with the Command Line Tools alone).
+        .executableTarget(
+            name: "translator-selftest",
+            dependencies: ["ExtensionTranslator"],
+            path: "Tests/TranslatorSelfTest",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .executableTarget(
             name: "NeuralBrowser",
-            dependencies: ["NeuralCore"],
+            dependencies: ["NeuralCore", "ExtensionTranslator"],
             path: "Sources/NeuralBrowser",
             swiftSettings: [
                 // AppKit + WebKit delegates are main-thread only; Swift 5 mode

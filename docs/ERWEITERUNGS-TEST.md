@@ -135,3 +135,60 @@ erst nach einer Korrektur bei Bitwarden oder Apple (Fehler melden: `ExecutionWor
 **Nur ein Mensch mit Anmeldung kann prüfen:** Bitwarden (Entsperren, Ausfüllen, „Login speichern?“-Leiste, Passkeys),
 1Password, Raindrop, LanguageTool (Konto-Funktionen), RYD-Premium, SponsorBlock-Einreichungen. Ebenso das echte Klick-Gefühl
 der Popups und Tastenkürzel im Alltag.
+
+## 9. Nachmessung mit Übersetzer (13.11.2026, Regelsatz 2)
+
+Alle Pakete wie oben (gleiche Dateien, SHA-256 geprüft) über den neuen Installationsweg
+(`--install-extension`, gleiche Logik wie „Install Extension…“) installiert und mit `--ext-script`
+gemessen, Testseiten lokal (`127.0.0.1:8765`), temporäre Profile. Gegenprobe jeweils mit dem
+unveränderten Paket (`original/`) im selben Lauf-Aufbau.
+
+| # | Erweiterung | vorher (unverändert) | nachher (übersetzt) | Was der Übersetzer geändert hat / Beleg |
+|---|---|---|---|---|
+| 1 | Bitwarden | Stufe 3 nein | **teilweise** | Original: `TypeError … chrome.scripting.ExecutionWorld.ISOLATED`, Autofill-Skript nicht eingespritzt. Übersetzt: keine Hintergrund-Fehler, `bitwardenAutofillInit` im Tab vorhanden, `getPageDetails()` liefert 1 Formular, Felder `email`, `password`. Popup zeigt Startseite und „Log in“; Anmeldeseite und Dialog „Self-hosted environment / Server URL“ einmal erreicht, Speichern nicht belegt. Popover bleibt offen (siehe unten). |
+| 2 | uBlock Origin Lite | ja | ja | Blockieren wie Original (adsbygoogle, ga, gpt blockiert). |
+| 3 | Dark Reader | ja | ja | Testseite und Wikipedia dunkel (`rgb(24,26,27)`), wie Original. |
+| 4 | SponsorBlock | teilweise | teilweise | Popup und Optionen wie Original; YouTube nicht neu gemessen. |
+| 5 | Vimium | nein (Manifest mit Kommentaren lädt nicht) | **ja** | 20 Kommentare entfernt, Hintergrund läuft, keine Fehler, `f` zeigt Link-Hinweise (Bildschirmfoto). `j` scrollte in einem frühen Lauf (240 px); spätere Läufe liefen bei gesperrtem Bildschirm (s. u.). |
+| 6 | Violentmonkey MV2-Paket | nein | **ja** | Testskript über die interne Schnittstelle installiert, lief auf der Seite (`data-nb-userscript="ran"`), Popup listet es. |
+| 6 | Violentmonkey MV3-Paket | nein | nein | `userScripts` fehlt in WebKit – nicht übersetzbar. |
+| 7 | Stylus | nein | nein | Manager und Popup öffnen, Stil-Installation scheitert, kein Stil angewendet (`apply.js: data.cfg` undefined). |
+| 8 | Return YouTube Dislike | nein | nein | unverändert, Ursache weiter offen. |
+| 9 | JSONVue | ja | ja | Baumansicht wie vorher. |
+| 10 | TWP | ja (2 Fehler) | ja (1 Fehler) | `runtime.onUpdateAvailable`-Fehler weg; Übersetzen im ersten Lauf belegt. |
+
+**Neue Zählung:** 6 von 10 erfüllen ihre Hauptaufgabe (vorher 4), 2 teilweise (SponsorBlock,
+Bitwarden). Gemessen an 15: 6 von 15; Bitwarden nur teilweise, die Regel „12 von 15 inkl.
+Bitwarden“ bleibt verfehlt.
+
+**Wichtige technische Befunde beim Bau des Übersetzers (gemessen):**
+- WebKits Namensraum-Objekte (`chrome.webNavigation` usw.) werden nach einer Speicherbereinigung
+  neu erzeugt: eine dort angehängte Eigenschaft war nach GC weg (Grund für „Zuweisung hält nicht“
+  im Abschnitt 3). Die Namensräume auf `chrome` sind nicht ersetzbar, `globalThis.chrome` selbst
+  aber schon. Das Vorschalt-Skript ersetzt deshalb **einen** der Globals durch einen Proxy.
+- Werden **beide** Globals (`chrome` und `browser`) ersetzt, stellt WebKit keine Ereignisse mehr zu
+  (`runtime.onMessage`, `webNavigation.*` kamen im Service Worker nie an; mit nur einem ersetzten
+  Global ja). Der Übersetzer wählt den Namen, den der Code häufiger benutzt, und lenkt den anderen
+  per Textregel um (Violentmonkey: `browser`, alle anderen: `chrome`).
+- Fehlende Namensräume (z. B. `notifications`) lassen sich direkt am echten API-Objekt ergänzen; das hält.
+
+**Popover schließt sich (App-Fehler, behoben):** Ursache belegt mit Stapel beim
+`NSPopover.willClose`: `-[NSView removeFromSuperview]` (unser `SidebarView.setExtensionButtons`) →
+`_geometryInWindowDidChangeForView:` → `-[NSPopover performClose:]`. Bitwarden ändert beim Öffnen
+das Aktionssymbol, die App baute daraufhin alle Erweiterungsknöpfe neu auf und entfernte damit den
+Anker des Popovers. Mit altem Code schloss sich das Popover nach 344 ms; mit der Korrektur (Knöpfe
+werden an Ort und Stelle aktualisiert) blieb es in 3 von 3 Läufen ≥ 6 s offen.
+
+**Offen / Einschränkungen dieser Nachmessung:**
+- Ab etwa 14 Uhr lief der Rechner ohne Nutzer (gesperrter Bildschirm: `visibilityState` „hidden“,
+  `requestAnimationFrame` feuert nicht). In diesem Zustand antworteten die Hintergründe von
+  Bitwarden, Dark Reader, TWP und uBOL-Optionen wenige Sekunden nach dem Start nicht mehr
+  (Bitwarden: Herzschlag im Service Worker endet nach 4 s, keine CPU-Last, keine Antwort auf
+  Nachrichten); Popups zeigen dann nur „Loading“/Ladekreis. Das passierte **genauso mit den
+  unveränderten Paketen und mit einem Build des letzten Commits** (vor Übersetzer und App-Änderungen),
+  liegt also nicht am Übersetzer. Ein einfacher Test-Service-Worker blieb 20 s erreichbar. Ursache
+  nicht geklärt; bitte mit Mensch am Rechner wiederholen.
+- Bitwarden: Entsperren, Ausfüllen, „Login speichern?“, Passkeys und Vaultwarden-Anmeldung brauchen
+  ein Konto – nicht geprüft. Speichern der Server-Adresse nicht belegt.
+- uBOL „Complete“-Modus, Spiegel-Test und YouTube-Tests (SponsorBlock, RYD) wurden in der
+  Nachmessung nicht neu bewertet bzw. scheiterten bei Original und Übersetzung gleich.

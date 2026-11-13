@@ -149,9 +149,27 @@ final class SidebarView: NSVisualEffectView, NSTableViewDataSource, NSTableViewD
         forwardButton.isEnabled = canGoForward
     }
 
+    /// Updates the extension buttons in place. A button that stays is never removed: it anchors
+    /// the extension's popover, and removing the anchor from its window closes the popover
+    /// (Bitwarden sets its badge while the popup opens, which closed the popup after ~0.3 s).
     func setExtensionButtons(_ buttons: [NSView]) {
-        extensionBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        buttons.forEach { extensionBar.addArrangedSubview($0) }
+        let wanted = Set(buttons.compactMap { $0.identifier?.rawValue })
+        for view in extensionBar.arrangedSubviews where !wanted.contains(view.identifier?.rawValue ?? "") {
+            view.removeFromSuperview()
+        }
+        for (index, view) in buttons.enumerated() {
+            if let id = view.identifier?.rawValue, let old = extensionButton(identifier: id) as? NSButton,
+               let new = view as? NSButton {
+                old.image = new.image
+                old.title = new.title
+                old.font = new.font
+                old.imagePosition = new.imagePosition
+                old.toolTip = new.toolTip
+                old.isEnabled = new.isEnabled
+            } else {
+                extensionBar.insertArrangedSubview(view, at: min(index, extensionBar.arrangedSubviews.count))
+            }
+        }
         extensionBar.isHidden = buttons.isEmpty
     }
 

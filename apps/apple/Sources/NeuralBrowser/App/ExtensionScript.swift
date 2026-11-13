@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import AppKit
+import ExtensionTranslator
 import WebKit
 
 /// `--ext-script STEPS.json`: drives a real browser window step by step to test
@@ -19,10 +20,16 @@ import WebKit
 ///   {"shot": "/tmp/x.png", "target": "window"}     target: "window" (default), "tab", "popup:FOLDER"
 ///   {"popup": FOLDER}                              click the extension's toolbar action
 ///   {"closePopup": FOLDER}
+///   {"extensionsWindow": "/tmp/x.png"}             open the Extensions window, save a picture, return each summary
+///   {"loadBackground": FOLDER}                    start the background content (service worker) now
+///   {"popupState": FOLDER}                         is the popover still shown? (closes are also logged as events)
 ///   {"keys": "f{Esc}"}                             real key events to the active web view
 ///   {"click": "css selector", "target": "tab"}     real mouse click at the element's center
 ///   {"selectTab": 0}
 ///   {"errors": true}                               WebKit's error list of every extension
+/// Top level `"assumeVisible": true` turns off WebKit's window-occlusion detection for tab and popup
+/// web views (SPI, test only): with a locked screen every page is "hidden", animation frames stop and
+/// apps like Bitwarden's popup never finish rendering.
 @MainActor
 final class ExtensionScript {
     unowned let app: AppDelegate
@@ -32,6 +39,8 @@ final class ExtensionScript {
     private var report: [String: Any] = [:]
     private var done = false
     private var loadWaiters: [(tab: BrowserTab, c: CheckedContinuation<Bool, Never>)] = []
+    private var popoverObserver: NSObjectProtocol?
+    private var assumeVisible = false
 
     init(app: AppDelegate, file: URL) {
         self.app = app
@@ -48,6 +57,7 @@ final class ExtensionScript {
               let steps = json["steps"] as? [[String: Any]] else {
             return finish(ok: false, error: "cannot read script \(file.path)")
         }
+        assumeVisible = json["assumeVisible"] as? Bool ?? false
         Task { await start(steps) }
     }
 
@@ -93,7 +103,16 @@ final class ExtensionScript {
 
     // MARK: Steps
 
+    private func forceVisible(_ webView: WKWebView?) {
+        guard assumeVisible, let webView, webView.responds(to: NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")) else { return }
+        webView.setValue(false, forKey: "windowOcclusionDetectionEnabled")
+    }
+
     private func perform(_ step: [String: Any]) async -> [String: Any] {
+        defer {
+            forceVisible(window.activeTab?.webView)
+            for ctx in manager?.contexts ?? [] { forceVisible(ctx.action(for: window.activeTab)?.popupWebView) }
+        }
         if let target = step["open"] as? String { return await open(target, newTab: step["newTab"] as? Bool ?? false,
                                                                      wait: step["wait"] as? Double ?? 0.5) }
         if let seconds = step["wait"] as? Double {
@@ -109,6 +128,17 @@ final class ExtensionScript {
         if let folder = step["closePopup"] as? String {
             context(folder).flatMap { $0.action(for: window.activeTab) }?.closePopup()
             return ["closePopup": folder]
+        }
+        if let path = step["extensionsWindow"] as? String { return extensionsWindow(png: path) }
+        if let folder = step["loadBackground"] as? String {
+            guard let ctx = context(folder) else { return ["loadBackground": folder, "error": "no such extension"] }
+            let error: Error? = await withCheckedContinuation { c in ctx.loadBackgroundContent { c.resume(returning: $0) } }
+            return ["loadBackground": folder, "error": error.map { ExtensionManager.describe($0) } ?? NSNull()]
+        }
+        if let folder = step["popupState"] as? String {
+            let action = context(folder).flatMap { $0.action(for: window.activeTab) }
+            return ["popupState": folder, "shown": action?.popupPopover?.isShown ?? false,
+                    "popupURL": action?.popupWebView?.url?.absoluteString ?? NSNull()]
         }
         if let keys = step["keys"] as? String { return await sendKeys(keys) }
         if let selector = step["click"] as? String { return await click(selector) }
@@ -152,6 +182,7 @@ final class ExtensionScript {
                 tab = window.activeTab!
                 tab.navigate(to: url)
             }
+            forceVisible(tab.webView)
             loadWaiters.append((tab, c))
             let waiterTab = tab
             DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in self?.resumeWaiters(for: waiterTab, ok: false) }
@@ -237,14 +268,30 @@ final class ExtensionScript {
         var presented = false
         manager.onPopupPresented = { _, c in if c === ctx { presented = true } }
         ctx.userGesturePerformed(in: tab)
+        let opened = Date()
         ctx.performAction(for: tab)
         for _ in 0..<200 where !presented { try? await Task.sleep(for: .milliseconds(100)) }
         let action = ctx.action(for: tab)
+        forceVisible(action?.popupWebView)
+        // Log when (and why) the popover closes, for the Bitwarden "closes after a second" bug.
+        if let popover = action?.popupPopover {
+            if let popoverObserver { NotificationCenter.default.removeObserver(popoverObserver) }
+            popoverObserver = NotificationCenter.default.addObserver(forName: NSPopover.willCloseNotification, object: popover,
+                                                                     queue: .main) { [weak self] note in
+                let reason = (note.userInfo?[NSPopover.closeReasonUserInfoKey] as? NSPopover.CloseReason)?.rawValue ?? "?"
+                MainActor.assumeIsolated {
+                    self?.results.append(["event": "popoverWillClose", "popup": folder, "reason": reason,
+                                          "afterMs": Int(Date().timeIntervalSince(opened) * 1000),
+                                          "appActive": NSApp.isActive, "behavior": popover.behavior.rawValue,
+                                          "stack": Thread.callStackSymbols.prefix(30).map { String($0.dropFirst(4)) }])
+                }
+            }
+        }
         var loaded = false
         if presented, let wv = action?.popupWebView {
             for _ in 0..<50 { if !wv.isLoading { loaded = true; break }; try? await Task.sleep(for: .milliseconds(100)) }
         }
-        return ["popup": folder, "presentsPopup": action?.presentsPopup ?? false, "presented": presented,
+        return ["popup": folder, "presentsPopup": action?.presentsPopup ?? false, "presented": presented, "appActive": NSApp.isActive,
                 "popupLoaded": loaded, "popupURL": action?.popupWebView?.url?.absoluteString ?? NSNull(),
                 "popupSize": action?.popupWebView.map { "\(Int($0.frame.width))x\(Int($0.frame.height))" } ?? NSNull()]
     }
@@ -265,6 +312,25 @@ final class ExtensionScript {
         }
         try? png.write(to: url)
         return ["shot": path, "size": "\(Int(image.size.width))x\(Int(image.size.height))"]
+    }
+
+    /// The management window and the text the install dialog shows, for a check without clicking.
+    private func extensionsWindow(png path: String) -> [String: Any] {
+        guard let manager else { return ["extensionsWindow": path, "error": "extensions off"] }
+        let dir = app.options.resolvedExtensionsDirectory
+        let controller = ExtensionsWindowController(manager: manager, extensionsDir: dir)
+        controller.reload()
+        controller.showWindow(nil)
+        var result: [String: Any] = ["extensionsWindow": path]
+        if let content = controller.window?.contentView, let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        }
+        result["summaries"] = ExtensionManager.extensionFolders(in: dir).compactMap { folder -> [String: String]? in
+            Installer.record(in: folder).map { ["id": $0.id, "text": ExtensionSummary.text($0)] }
+        }
+        controller.close()
+        return result
     }
 
     /// Window views via cacheDisplay plus WebKit snapshots of the page and an open popup.

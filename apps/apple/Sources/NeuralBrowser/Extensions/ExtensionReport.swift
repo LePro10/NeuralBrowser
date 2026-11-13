@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import AppKit
+import ExtensionTranslator
 import WebKit
 
 /// `--extension-report`: loads every extension in the folder into a
@@ -35,8 +36,12 @@ enum ExtensionReport {
     static func report(folder: URL, controller: WKWebExtensionController) async -> [String: Any] {
         var entry: [String: Any] = ["folder": folder.lastPathComponent]
         let ext: WKWebExtension
+        if let record = Installer.record(in: folder) {
+            entry["translatedWithRuleSet"] = record.ruleSetVersion
+            entry["translatorChanges"] = record.translation.changes.map { "\($0.rule) ×\($0.count)" }
+        }
         do {
-            ext = try await WKWebExtension(resourceBaseURL: folder)
+            ext = try await WKWebExtension(resourceBaseURL: Installer.loadableFolder(for: folder) ?? folder)
         } catch {
             entry["loaded"] = false
             entry["errors"] = [ExtensionManager.describe(error)]

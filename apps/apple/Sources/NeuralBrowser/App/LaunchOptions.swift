@@ -12,6 +12,8 @@ import NeuralCore
 ///                 [--private] [--screenshot PNG] [--profile-dir DIR] [--store-bench]
 ///   NeuralBrowser --extension-report [--extensions-dir DIR]
 ///   NeuralBrowser --ext-script STEPS.json [--extensions-dir DIR] [--timeout SEC]
+///   NeuralBrowser --install-extension PATH [PATH ...] [--extensions-dir DIR]   (folder, .zip or .crx)
+///   NeuralBrowser --retranslate-extensions [--extensions-dir DIR]
 struct LaunchOptions {
     enum Mode {
         case normal
@@ -19,6 +21,10 @@ struct LaunchOptions {
         case extensionReport
         /// Runs the steps of a JSON test script (see ExtensionScript.swift).
         case extensionScript(URL)
+        /// Installs (unpacks + translates) packages without UI and prints the records as JSON.
+        case installExtensions([URL])
+        /// Rebuilds `patched/` of every installed extension with the current rules.
+        case retranslateExtensions
     }
 
     var mode: Mode = .normal
@@ -63,6 +69,14 @@ struct LaunchOptions {
                 }
                 o.mode = .smokeTest(urls)
             case "--extension-report": o.mode = .extensionReport
+            case "--install-extension":
+                var paths: [URL] = []
+                while i + 1 < args.count, !args[i + 1].hasPrefix("--") {
+                    i += 1
+                    paths.append(URL(fileURLWithPath: args[i]))
+                }
+                o.mode = .installExtensions(paths)
+            case "--retranslate-extensions": o.mode = .retranslateExtensions
             case "--ext-script": if let v = value() { o.mode = .extensionScript(URL(fileURLWithPath: v)) }
             case "--data-dir": if let v = value() { o.dataDirectory = URL(fileURLWithPath: v) }
             case "--profile-dir": if let v = value() { o.profileDirectory = URL(fileURLWithPath: v) }

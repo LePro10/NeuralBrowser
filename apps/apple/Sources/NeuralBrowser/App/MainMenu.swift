@@ -26,6 +26,9 @@ enum MainMenu {
         item(file, "Close Tab", #selector(BrowserWindowController.closeCurrentTab(_:)), "w")
         item(file, "Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift])
         item(file, "Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift])
+        file.addItem(.separator())
+        item(file, "Install Extension…", #selector(AppDelegate.installExtension(_:)), "")
+        item(file, "Extensions…", #selector(AppDelegate.showExtensions(_:)), "e", [.command, .shift])
 
         let edit = submenu(main, "Edit")
         item(edit, "Undo", Selector(("undo:")), "z")

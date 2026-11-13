@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var smokeTest: SmokeTest?
     private var extensionScript: ExtensionScript?
     private var keyMonitor: Any?
+    private var extensionsWindow: ExtensionsWindowController?
 
     init(options: LaunchOptions) {
         self.options = options
@@ -76,6 +77,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let script = ExtensionScript(app: self, file: file)
             extensionScript = script
             script.run()
+        case .installExtensions(let paths):
+            NSApp.setActivationPolicy(.prohibited)
+            ExtensionCLI.install(paths, into: options.resolvedExtensionsDirectory)
+        case .retranslateExtensions:
+            NSApp.setActivationPolicy(.prohibited)
+            ExtensionCLI.retranslateAll(in: options.resolvedExtensionsDirectory)
         }
     }
 
@@ -86,11 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dataDir = options.resolvedDataDirectory
         store = RustStore(databaseURL: dataDir.appendingPathComponent("browser.sqlite"))
 
-        // Creating the controller is cheap; loading extensions happens after the window is up.
+        // Creating the controller is cheap and must happen before the first tab, so an
+        // extension installed later reaches existing tabs; loading happens after the window is up.
         let extDir = options.resolvedExtensionsDirectory
-        if ExtensionManager.hasExtensions(in: extDir) {
-            enableExtensions(persistent: true)
-        }
+        enableExtensions(persistent: true)
 
         let window = openWindow(isPrivate: false)
         if let session = try? store.loadSession(), !session.tabs.isEmpty {
@@ -105,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sleeper = TabSleeper(app: self)
         sleeper?.start()
 
-        if let manager = extensionManager {
+        if let manager = extensionManager, ExtensionManager.hasExtensions(in: extDir) {
             DispatchQueue.main.async {
                 Task { @MainActor in
                     _ = await manager.loadAll(from: extDir, autoGrant: false)
@@ -173,6 +179,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// ⌘T with no window open.
     @objc func newTab(_ sender: Any?) { newWindow(sender) }
+
+    // MARK: Extensions
+
+    @objc func installExtension(_ sender: Any?) {
+        guard case .normal = options.mode, let manager = extensionManager else { return }
+        ExtensionInstallFlow.run(manager: manager, extensionsDir: options.resolvedExtensionsDirectory) { [weak self] in
+            self?.extensionsWindow?.reload()
+        }
+    }
+
+    @objc func showExtensions(_ sender: Any?) {
+        guard case .normal = options.mode, let manager = extensionManager else { return }
+        let controller = extensionsWindow ?? ExtensionsWindowController(manager: manager,
+                                                                        extensionsDir: options.resolvedExtensionsDirectory)
+        extensionsWindow = controller
+        controller.reload()
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
 
     // MARK: Session
 

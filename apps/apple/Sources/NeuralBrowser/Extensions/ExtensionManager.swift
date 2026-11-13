@@ -3,10 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import AppKit
+import ExtensionTranslator
 import WebKit
 
-/// Loads unpacked web extensions (folders with manifest.json) through
-/// WKWebExtensionController and forwards tab/window events to it.
+/// Loads web extensions through WKWebExtensionController and forwards tab/window events to it.
+/// Installed extensions live in `<Extensions>/<id>/` (`original/`, `patched/`, `install.json`,
+/// see ExtensionTranslator.Installer); WebKit loads `patched/`. A plain unpacked folder with a
+/// manifest.json directly inside still loads as it is.
 @MainActor
 final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     struct LoadResult {
@@ -55,12 +58,13 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
 
     // MARK: Discovery and loading
 
+    /// Top-level extension folders (installed or plain unpacked); hidden staging folders are skipped.
     static func extensionFolders(in dir: URL) -> [URL] {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isDirectoryKey],
                                                       options: [.skipsHiddenFiles]) else { return [] }
         return items
-            .filter { fm.fileExists(atPath: $0.appendingPathComponent("manifest.json").path) }
+            .filter { Installer.loadableFolder(for: $0) != nil }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
@@ -72,9 +76,10 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         return "org.neuralbrowser.extension.\(name)"
     }
 
+    /// Self tests (`autoGrant`) load everything; the normal app skips extensions the user switched off.
     func loadAll(from dir: URL, autoGrant: Bool) async -> [LoadResult] {
         var results: [LoadResult] = []
-        for folder in Self.extensionFolders(in: dir) {
+        for folder in Self.extensionFolders(in: dir) where autoGrant || isEnabled(id: folder.lastPathComponent) {
             results.append(await load(folder: folder, autoGrant: autoGrant))
         }
         return results
@@ -83,7 +88,8 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     func load(folder: URL, autoGrant: Bool) async -> LoadResult {
         var result = LoadResult(folder: folder)
         do {
-            let ext = try await WKWebExtension(resourceBaseURL: folder)
+            guard let base = Installer.loadableFolder(for: folder) else { throw InstallError.notFound("manifest.json in \(folder.path)") }
+            let ext = try await WKWebExtension(resourceBaseURL: base)
             result.webExtension = ext
             let context = WKWebExtensionContext(for: ext)
             context.uniqueIdentifier = Self.identifier(for: folder)
@@ -102,6 +108,41 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             result.error = Self.describe(error)
         }
         return result
+    }
+
+    // MARK: Installed extensions (enable, disable, remove, re-translate)
+
+    func context(id: String) -> WKWebExtensionContext? {
+        contexts.first { $0.uniqueIdentifier == Self.identifier(for: URL(fileURLWithPath: id)) }
+    }
+
+    func isEnabled(id: String) -> Bool {
+        ((try? app.store.getSetting(key: SettingKey.extensionEnabled(id))) ?? nil) != "false"
+    }
+
+    /// Switches an extension on (loads it; asks for its permissions if never asked) or off (unloads it).
+    func setEnabled(_ enabled: Bool, id: String, in dir: URL) async {
+        try? app.store.setSetting(key: SettingKey.extensionEnabled(id), value: enabled ? "true" : "false")
+        if enabled {
+            if context(id: id) == nil { _ = await load(folder: dir.appendingPathComponent(id), autoGrant: false) }
+        } else {
+            unload(id: id)
+        }
+        app.windows.forEach { $0.refreshExtensionBar() }
+    }
+
+    func unload(id: String) {
+        guard let ctx = context(id: id) else { return }
+        try? controller.unload(ctx)
+        contexts.removeAll { $0 === ctx }
+        app.windows.forEach { $0.refreshExtensionBar() }
+    }
+
+    /// Records the user's decision from the install dialog, so loading does not ask again.
+    func rememberGrant(id: String, granted: Bool) {
+        try? app.store.setSetting(key: SettingKey.extensionGrant(Self.identifier(for: URL(fileURLWithPath: id))),
+                                  value: granted ? "granted" : "denied")
+        try? app.store.setSetting(key: SettingKey.extensionEnabled(id), value: granted ? "true" : "false")
     }
 
     /// Grants everything the manifest requests (permissions, host and content-script patterns).

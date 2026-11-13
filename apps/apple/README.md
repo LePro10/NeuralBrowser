@@ -97,11 +97,32 @@ $B --ext-script /tmp/dr.json --extensions-dir /tmp/exts --timeout 120
 
 ## Extensions
 
-Put unpacked extensions (folder with `manifest.json`) into
-`~/Library/Application Support/NeuralBrowser/Extensions/<name>/`. On first load
-the app asks once whether to allow the extension and its permissions; the answer
-is remembered. Extension icons appear at the bottom of the sidebar; a click runs
-the action (popup shown as popover). Extensions are off in private windows.
+File ▸ Install Extension… takes a folder with `manifest.json`, a `.zip` or a
+`.crx`. The package is unpacked safely (no path may leave the target folder, no
+symlinks, size and file-count limits, CRC check, nothing from the package is
+executed) and translated: known WebKit gaps are bridged by general rules (a
+generated prelude script, a few counted text replacements; permissions are never
+widened). Before anything is enabled a dialog shows the permissions, the
+websites, what the translator changed and what will probably not work.
+File ▸ Extensions… lists installed extensions (on/off, details, re-translate,
+remove). Rules and the list of tested extensions: `docs/ERWEITERUNGEN.md`;
+code: `Sources/ExtensionTranslator/`.
+
+Layout of an installed extension: `Extensions/<id>/original/` (the package,
+unchanged), `patched/` (what WebKit loads) and `install.json` (source, version,
+SHA-256 of the package, rule-set version, which rules changed what and how often).
+A plain unpacked folder with `manifest.json` directly inside still loads as it is
+(untranslated). On first load the app asks once whether to allow an extension
+that was not installed through the dialog; the answer is remembered. Extension
+icons appear at the bottom of the sidebar; a click runs the action (popup shown
+as popover). Extensions are off in private windows.
+
+```sh
+# Install / re-translate without UI (JSON on stdout), offline tests of installer and rules:
+$B --install-extension pkg.zip other.crx some-folder --extensions-dir /tmp/exts
+$B --retranslate-extensions --extensions-dir /tmp/exts
+swift run -c release translator-selftest          # exit 0 = all passed
+```
 
 Notes from testing:
 - No entitlement and no developer account are needed: the ad-hoc signature
@@ -128,7 +149,12 @@ Sources/NeuralBrowser/
   UI/          BrowserWindowController, SidebarView, CommandBarView
   Features/    FindBarView, DownloadManager
   Extensions/  ExtensionManager (controller + delegate), ExtensionAdapters
-               (WKWebExtensionTab/Window), ExtensionReport
+               (WKWebExtensionTab/Window), ExtensionReport, ExtensionsWindow
+               (install dialog, management window, --install-extension)
+Sources/ExtensionTranslator/  Installer, ZipArchive (safe unpacking), Translator,
+               Rules, Prelude (generated compatibility script), TextRules, JSONC,
+               Compatibility (what will not work); Foundation only
+Tests/TranslatorSelfTest/     offline tests incl. malicious archives
 TestExtensions/hello/   MV3 test extension (content script, service worker, popup)
 scripts/                bundle.sh, run.sh
 ```
