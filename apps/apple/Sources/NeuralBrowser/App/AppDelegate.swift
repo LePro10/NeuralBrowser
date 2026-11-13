@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var extensionScript: ExtensionScript?
     private var keyMonitor: Any?
     private var extensionsWindow: ExtensionsWindowController?
+    /// Built-in Vaultwarden client; only in normal mode.
+    private(set) var vault: VaultService?
+    private var vaultWindow: VaultWindowController?
 
     init(options: LaunchOptions) {
         self.options = options
@@ -124,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Before the first tab, so restored tabs are filtered as soon as the lists are loaded.
         shield = Shield(directory: dataDir.appendingPathComponent("Shield", isDirectory: true), settings: store)
         shield?.start()
+        vault = VaultService(settings: store)
 
         let window = openWindow(isPrivate: false)
         if let session = try? store.loadSession(), !session.tabs.isEmpty {
@@ -167,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        vault?.lock()
         saveSessionNow()
         store.flush()
     }
@@ -231,6 +236,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                                         extensionsDir: options.resolvedExtensionsDirectory)
         extensionsWindow = controller
         controller.reload()
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: Passwords
+
+    @objc func showPasswords(_ sender: Any?) {
+        guard let vault else { return }
+        let controller = vaultWindow ?? VaultWindowController(vault: vault)
+        vaultWindow = controller
+        controller.refresh()
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
     }

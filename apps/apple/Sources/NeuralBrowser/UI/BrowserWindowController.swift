@@ -476,6 +476,8 @@ extension BrowserWindowController: NSMenuItemValidation {
             }
             menuItem.state = shield.isSiteDisabled(activeTab?.url) ? .off : .on
             return true
+        case #selector(fillLogin(_:)), #selector(saveLogin(_:)):
+            return canUseVaultOnActiveTab
         default:
             return true
         }

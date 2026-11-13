@@ -52,6 +52,12 @@ enum SettingKey {
     static let shieldEnabled = "shield.enabled"
     /// Sites (hosts without "www.", one per line) where content blocking is off.
     static let shieldDisabledHosts = "shield.disabledHosts"
+    /// Vaultwarden/Bitwarden server address and account e-mail (not secret; the master
+    /// password and everything derived from it are never stored).
+    static let vaultServer = "vault.server"
+    static let vaultEmail = "vault.email"
+    /// Random id this installation sends as `deviceIdentifier` when signing in.
+    static let vaultDeviceId = "vault.deviceId"
     static func extensionGrant(_ id: String) -> String { "extensions.grant.\(id)" }
     /// "false" when the user switched an installed extension off (key: folder id).
     static func extensionEnabled(_ id: String) -> String { "extensions.enabled.\(id)" }

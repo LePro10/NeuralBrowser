@@ -29,6 +29,7 @@ enum MainMenu {
         file.addItem(.separator())
         item(file, "Install Extension…", #selector(AppDelegate.installExtension(_:)), "")
         item(file, "Extensions…", #selector(AppDelegate.showExtensions(_:)), "e", [.command, .shift])
+        item(file, "Passwords…", #selector(AppDelegate.showPasswords(_:)), "p", [.command, .shift])
 
         let edit = submenu(main, "Edit")
         item(edit, "Undo", Selector(("undo:")), "z")
@@ -42,6 +43,9 @@ enum MainMenu {
         item(edit, "Find…", #selector(BrowserWindowController.findInPage(_:)), "f")
         item(edit, "Find Next", #selector(BrowserWindowController.findNext(_:)), "g")
         item(edit, "Find Previous", #selector(BrowserWindowController.findPrevious(_:)), "g", [.command, .shift])
+        edit.addItem(.separator())
+        item(edit, "Fill Login", #selector(BrowserWindowController.fillLogin(_:)), "\\")
+        item(edit, "Save Login…", #selector(BrowserWindowController.saveLogin(_:)), "")
 
         let view = submenu(main, "View")
         item(view, "Reload Page", #selector(BrowserWindowController.reload(_:)), "r")

@@ -139,6 +139,11 @@ final class SmokeTest {
         if let manager = app.extensionManager, !manager.contexts.isEmpty {
             failures = await probeExtensions(manager, tab: first)
         }
+        if app.options.vaultFillTest {
+            let result = await VaultFillTest.run(on: first)
+            report["vaultFill"] = result.report
+            failures += result.failures
+        }
         if app.options.sleepTest, window.tabs.count > 1 {
             await testSleep()
         }

@@ -11,6 +11,7 @@ import NeuralCore
 ///   NeuralBrowser --smoke-test URL [URL ...] [--timeout SEC] [--hold SEC] [--sleep-test]
 ///                 [--private] [--screenshot PNG] [--profile-dir DIR] [--store-bench]
 ///                 [--shield-lists FILE ... | --shield-download] [--shield-off HOST] [--eval JS]
+///                 [--vault-fill-test]
 ///   NeuralBrowser --extension-report [--extensions-dir DIR]
 ///   NeuralBrowser --ext-script STEPS.json [--extensions-dir DIR] [--timeout SEC]
 ///                 [--normal-mode --data-dir DIR]   (persistent profile, normal loading, see ExtensionScript)
@@ -62,6 +63,9 @@ struct LaunchOptions {
     var shieldOffHosts: [String] = []
     /// Smoke test: JavaScript evaluated in the first tab after loading; the result goes into the report.
     var evalScript: String?
+    /// Smoke test: run the password fill routine and its guard with dummy values on the first tab
+    /// (no vault, no server; see VaultFillTest).
+    var vaultFillTest = false
 
     static func parse(_ args: [String]) -> LaunchOptions {
         var o = LaunchOptions()
@@ -111,6 +115,7 @@ struct LaunchOptions {
             case "--shield-download": o.shieldDownload = true
             case "--shield-off": if let v = value() { o.shieldOffHosts.append(v) }
             case "--eval": o.evalScript = value()
+            case "--vault-fill-test": o.vaultFillTest = true
             default: break // ignore unknown (e.g. -NSDocumentRevisionsDebugMode)
             }
             i += 1

@@ -45,6 +45,8 @@ Settings (no UI yet, stored in the `settings` table of `browser.sqlite`):
 | ⌘[ ⌘] ⌘R | Back, forward, reload |
 | ⌘F, ⌘G, ⇧⌘G | Find in page |
 | ⌘N, ⇧⌘N | New window, new private window |
+| ⇧⌘P | Passwords window (Vaultwarden sign-in, list) |
+| ⌘\\ | Fill login on the current https page |
 
 Command bar: type, ↑/↓ to pick a suggestion (open tabs, history, bookmarks),
 Enter opens it; otherwise the text is resolved as URL or search.
@@ -114,6 +116,51 @@ navigates; no counter of blocked requests; no choice of lists yet.
     scripts/shield-test.sh        # local page, no network: on, site off, off -> on, on -> off, private
     $B --smoke-test URL --shield-download --eval 'JS'     # real lists in a temporary folder
     $B --smoke-test URL --shield-lists FILE --shield-off HOST --eval 'JS'
+
+## Passwords (Vaultwarden)
+
+`Sources/NeuralBrowser/Vault/`. A built-in client for a self-hosted Vaultwarden (or
+Bitwarden-compatible) server, docs/SECURITY.md 4.3/4.7. The Rust core (`vault` module, see
+core/README.md "Vault") does all cryptography and builds/parses every HTTP message;
+`VaultService` only sends them (ephemeral `URLSession`: no cookies, no cache, 30 s timeout,
+redirects only to the same https host) and keeps the session for the UI.
+
+- **File ▸ Passwords… (⇧⌘P):** server address (`https://` only, shown in full), e-mail,
+  master password; two-step login with an authenticator app or an e-mail code ("Send Code").
+  If the server reports key derivation settings below the minimums (PBKDF2 < 600,000,
+  Argon2id < 19 MiB / 2 iterations) an alert explains it and only "Sign In Anyway" retries.
+  Signed in: server, account, number of logins, searchable list (name, user name, owner;
+  never passwords), Sync, Lock.
+- **Edit ▸ Fill Login (⌘\\):** only after this action, only on https pages without insecure
+  content, logins matched by the exact host. Several matches: a menu to choose. The values
+  are written by a script in its own content world (`VaultFill`), main frame only, passed as
+  arguments; it picks the focused (else first) visible password field and the nearest visible
+  text/e-mail/tel field before it in the same form, sets the values with the native setter
+  and fires `input`/`change`. It re-checks the page origin right before writing, returns only
+  "filled yes/no", never submits a form. Locked or signed out: opens the Passwords window.
+- **Edit ▸ Save Login…:** reads the visible password field and its user name field (same
+  rules), then a sheet in the shell (site, name, user name, password as dots with "Show
+  password"); only "Save" sends it. If the site already has an entry with that user name,
+  nothing is saved.
+- **Locking:** after 15 minutes without use, when the screens sleep or lock, on system
+  sleep, on fast user switching, with "Lock" and on quit. Unlocking means signing in again.
+
+**What is stored where.** Settings table of `browser.sqlite`: `vault.server`, `vault.email`
+and `vault.deviceId` (a random UUID sent as device identifier). Nothing else: the master
+password is passed from the field to the core and never kept; keys, token and decrypted
+entries live only in the core's memory until lock/quit. Errors (step, HTTP status, the
+server's short message as returned by the core) appear in the window and as one
+`NeuralBrowser vault: …` line in the system log, never with request or response content.
+
+**Limits (first version).** Sign in once per app session (no token refresh, nothing
+persisted, no Keychain yet); two-step login only with authenticator app or e-mail code (no
+passkeys/FIDO2/WebAuthn, YubiKey, Duo, "remember this device"); exact-host matching (no
+subdomains, no base domain); no update or deletion of existing entries; the list has no site
+column (the core reports URIs only for page lookups); fields inside shadow DOM or in frames are
+never filled. **Not yet tested against a real server** (the self tests use no network).
+
+    scripts/vault-fill-test.sh    # local page, dummy values: guard, decoys, iframe, React-like inputs (25 checks)
+    $B --smoke-test URL --vault-fill-test
 
 ## Extensions
 
@@ -190,6 +237,9 @@ Sources/NeuralBrowser/
   Tabs/        BrowserTab (lazy WKWebView, navigation/UI delegates), TabSleeper, FaviconLoader
   UI/          BrowserWindowController, SidebarView, CommandBarView
   Features/    FindBarView, DownloadManager
+  Vault/       VaultService (sign-in, sync, lookups, auto-lock), VaultWindow (Passwords),
+               VaultFill (guard + fill/read scripts), VaultActions (menu actions, save sheet),
+               VaultFillTest (--vault-fill-test)
   Extensions/  ExtensionManager (controller + delegate), ExtensionAdapters
                (WKWebExtensionTab/Window), ExtensionReport, ExtensionsWindow
                (install dialog, management window, --install-extension)
@@ -198,7 +248,8 @@ Sources/ExtensionTranslator/  Installer, ZipArchive (safe unpacking), Translator
                Compatibility (what will not work); Foundation only
 Tests/TranslatorSelfTest/     offline tests incl. malicious archives
 TestExtensions/hello/   MV3 test extension (content script, service worker, popup)
-scripts/                bundle.sh (APP=… builds elsewhere), run.sh, ext-normal-test.sh
+scripts/                bundle.sh (APP=… builds elsewhere), run.sh, ext-normal-test.sh,
+                        shield-test.sh, vault-fill-test.sh
 ```
 
 `BrowserStore` uses the core's value types directly. `RustStore` queues the frequent

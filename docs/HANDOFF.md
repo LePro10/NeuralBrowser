@@ -25,12 +25,18 @@ https://github.com/LePro10/NeuralBrowser
    (sonst Neukompilieren, Sekunden pro Klick). Details: `apps/apple/README.md` „Content blocking“.
 2. Rest Phase 1: Oberfläche für Lesezeichen, Verlauf, Einstellungen (Suchmaschine),
    RAM-Anzeige pro Tab, heller Modus ansehen.
-3. **Vaultwarden fest einbauen** (Nutzer-Entscheidung 13.11.2026, hat Vorrang vor der
-   Bitwarden-Erweiterung; Grundlage rbw-Code, MIT). Erledigt: `docs/SECURITY.md` 4.7,
-   `docs/NETZWERK.md`, Prüfung von rbw (siehe unten). **Als Nächstes: dem Nutzer den Aufbau
-   vorschlagen und freigeben lassen** (siehe „rbw als Bibliothek“), dann Kern-Modul in Rust,
-   Oberfläche in Swift (anmelden, entsperren, ausfüllen, speichern). Echte Anmeldung testet
-   der Nutzer mit; dafür braucht es seine Server-Adresse und ein Test-Konto.
+3. **Vaultwarden: erste echte Anmeldung mit dem Nutzer testen.** Gebaut 13.11.2026: Kern
+   `core/neural-core/src/vault/` (ohne Netz, Krypto aus rbw), Oberfläche
+   `apps/apple/Sources/NeuralBrowser/Vault/` (File ▸ Passwords… ⇧⌘P, Edit ▸ Fill Login ⌘\,
+   Edit ▸ Save Login…). Tests: `cargo test` 44/44, `scripts/vault-fill-test.sh` 25/25.
+   **Nie gegen einen echten Server gelaufen.** Unsichere Protokoll-Details, falls die
+   Anmeldung scheitert (Fehlertext im Fenster und Log-Zeile „NeuralBrowser vault:“):
+   `Device-Type 7` mit `client_id=cli`, `Bitwarden-Client-Version 2024.12.0`, Inhalt der
+   Anfrage für den E-Mail-Code, Fehlertexte bei falschem Zweitfaktor. Von Hand ungeprüft:
+   Fenster in hell/dunkel, Auswahl bei mehreren Treffern, Speichern-Fenster, Sperren bei
+   Bildschirmsperre. Danach: angemeldet bleiben über Neustart (Refresh-Token im
+   Schlüsselbund, verschlüsselter Tresor-Stand auf Platte), Einträge ändern, Host-Spalte.
+   `cargo audit`/`cargo deny` sind nicht installiert und liefen nie (SECURITY.md Regel 9).
    Popup-Fehler der Erweiterungs-Symbole: Absicherung eingebaut (siehe Risiken), der Nutzer
    muss im echten Gebrauch bestätigen, ob es jetzt zuverlässig öffnet.
 4. Erweiterungs-Messungen aus ERWEITERUNGS-TEST.md Abschnitt 9, die am Nachmittag scheiterten,
@@ -94,11 +100,8 @@ https://github.com/LePro10/NeuralBrowser
   die Anfrage-/Antwort-Formate (prelogin, login mit Zwei-Faktor, sync, add, edit, Token
   erneuern); `Client::new(base_url, identity_url, ui_url, cert)` nimmt die Adressen direkt,
   hängt aber an `reqwest`, `tokio` und `axum` (SSO-Rückruf).
-- Vorschlag (noch nicht freigegeben): neues Crate `core/neural-vault`; die drei
-  Krypto-Module mit MIT-Hinweis unverändert übernehmen; die Formate aus `api.rs` übernehmen,
-  aber ohne eigenen HTTP-Client: der Kern baut Anfragen und liest Antworten, die Hülle sendet
-  sie (URLSession; Zertifikate, Proxy und VPN des Systems, kein `reqwest`/`rustls` in der App).
-  Alternative: `ureq`/`reqwest` im Kern (ein Code für alle Plattformen, App wird größer).
+- Umgesetzt (Nutzer-Freigabe 13.11.2026): Krypto-Module unverändert übernommen, der Kern
+  baut Anfragen und liest Antworten, die Hülle sendet sie mit URLSession.
 
 ## Recherche: Bibliothek für die Vaultwarden-Anbindung (13.11.2026, Haiku-Recherche)
 Es gibt keine fertige, sauber lizenzierte Bibliothek. Kandidaten:
