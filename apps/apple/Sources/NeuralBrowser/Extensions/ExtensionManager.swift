@@ -61,6 +61,9 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         // runtime messages to the background service worker (measured: `sendMessage` from content
         // script and popup resolves with `undefined`, `onMessage` never fires).
         base.websiteDataStore = app.websiteDataStore
+        // The Bitwarden popup needs Symbol.dispose too; without it the popup page throws on start,
+        // renders nothing and WebKit shows an empty popover of size zero.
+        PagePolyfills.install(in: base.userContentController)
         config.webViewConfiguration = base
         return config
     }
@@ -91,6 +94,15 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     func loadAll(from dir: URL, autoGrant: Bool) async -> [LoadResult] {
         var results: [LoadResult] = []
         for folder in Self.extensionFolders(in: dir) where autoGrant || isEnabled(id: folder.lastPathComponent) {
+            // Translated with older rules: translate again, so fixes reach installed extensions.
+            if let record = Installer.record(in: folder), record.ruleSetVersion < RuleSet.version {
+                do {
+                    _ = try Installer.retranslate(folder)
+                    NSLog("NeuralBrowser: %@ translated again with rules v%d", folder.lastPathComponent, RuleSet.version)
+                } catch {
+                    NSLog("NeuralBrowser: %@ could not be translated again: %@", folder.lastPathComponent, "\(error)")
+                }
+            }
             results.append(await load(folder: folder, autoGrant: autoGrant))
         }
         return results
@@ -116,6 +128,22 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             await exemptFromTrackingPrevention(context)
             try controller.load(context)
             contexts.append(context)
+            // Errors of the background etc. land in the console, so broken extensions are visible.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self, weak context] in
+                // TEMP diagnostics: NB_DEBUG_CLICK=1 clicks the extension's button once.
+                if ProcessInfo.processInfo.environment["NB_DEBUG_CLICK"] != nil, let self, let context,
+                   let button = (self.app.keyBrowserWindow ?? self.app.primaryWindow)?.extensionButton(for: context) as? NSButton {
+                    button.performClick(nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak context] in
+                        context?.action(for: nil)?.closePopup()
+                        context?.action(for: (self.app.keyBrowserWindow ?? self.app.primaryWindow)?.activeTab)?.closePopup()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { button.performClick(nil) }
+                    }
+                }
+                guard let context, !context.errors.isEmpty else { return }
+                NSLog("NeuralBrowser: extension %@ errors: %@", context.uniqueIdentifier,
+                      context.errors.map { "\($0.localizedDescription)" }.joined(separator: " | "))
+            }
         } catch {
             result.error = Self.describe(error)
         }
@@ -281,11 +309,18 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     }
 
     @objc private func actionClicked(_ sender: NSButton) {
-        guard let context = contexts.first(where: { $0.uniqueIdentifier == sender.identifier?.rawValue }) else { return }
+        NSLog("NeuralBrowser: extension button clicked (%@)", sender.identifier?.rawValue ?? "-")
+        guard let context = contexts.first(where: { $0.uniqueIdentifier == sender.identifier?.rawValue }) else {
+            NSLog("NeuralBrowser: no extension context for the clicked button")
+            return
+        }
         let id = context.uniqueIdentifier
         // The click that closes an open popup (a popover closes on mouse-down outside of it)
         // must not open it again right away.
-        if let closed = popupClosedAt[id], Date().timeIntervalSince(closed) < 0.4 { return }
+        if let closed = popupClosedAt[id], Date().timeIntervalSince(closed) < 0.4 {
+            NSLog("NeuralBrowser: click ignored, popup closed just before")
+            return
+        }
         let window = sender.window?.windowController as? BrowserWindowController
         let tab = window?.activeTab
         if let tab { context.userGesturePerformed(in: tab) }
@@ -293,6 +328,9 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         popupAttempt[id] = (popupAttempt[id] ?? 0) + 1
         let attempt = popupAttempt[id]
         context.performAction(for: tab)
+        NSLog("NeuralBrowser: performAction done, tab %d, presentsPopup %d, enabled %d",
+              tab == nil ? 0 : 1, context.action(for: tab)?.presentsPopup == true ? 1 : 0,
+              context.action(for: tab)?.isEnabled == true ? 1 : 0)
         guard context.action(for: tab)?.presentsPopup == true else { return }
         // WebKit shows a popup only when its page finishes loading after the click, and ignores
         // clicks while it believes a popup is open or on its way. A popup page that failed to load,
@@ -327,9 +365,60 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         popupCloseObservers[id] = NotificationCenter.default.addObserver(
             forName: NSPopover.willCloseNotification, object: popover, queue: .main
         ) { [weak self] _ in
+            NSLog("NeuralBrowser: extension %@: popover closing", id)
             MainActor.assumeIsolated { self?.popupClosedAt[id] = Date() }
         }
+        // No white flash while the popup page loads: let the popover's own background show through.
+        if let webView = action.popupWebView {
+            webView.setValue(false, forKey: "drawsBackground")
+            webView.underPageBackgroundColor = .clear
+        }
+        // A page that has not laid out yet reports size zero, which gives a tiny empty bubble.
+        // Chrome's popup limits are 25...800 x 25...600; Bitwarden is designed for 380 x 600.
+        if popover.contentSize.width < 50 || popover.contentSize.height < 50 {
+            NSLog("NeuralBrowser: extension %@: popup size %@ too small, using 380 x 600",
+                  id, NSStringFromSize(popover.contentSize))
+            popover.contentSize = NSSize(width: 380, height: 600)
+        }
         if !popover.isShown { popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY) }
+        NSLog("NeuralBrowser: extension %@: popover shown %d, size %@, behavior %d", id, popover.isShown ? 1 : 0,
+              NSStringFromSize(popover.contentSize), popover.behavior.rawValue)
+        if let webView = action.popupWebView {
+            webView.isInspectable = true
+            let probe = """
+            JSON.stringify({ready: document.readyState, href: location.href,
+              body: document.body ? document.body.innerHTML.length : -1,
+              w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight,
+              dispose: typeof Symbol.dispose, err: window.__nbErrors || null,
+              pending: performance.getEntriesByType('resource').filter(e => !e.responseEnd).map(e => e.name)})
+            """
+            for delay in [0.5, 3.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak webView, weak popover] in
+                    webView?.evaluateJavaScript(probe) { result, error in
+                        NSLog("NeuralBrowser: popup probe +%.1fs (shown %d): %@ %@", delay, popover?.isShown == true ? 1 : 0,
+                              String(describing: result ?? "-"), error.map { String(describing: $0) } ?? "")
+                    }
+                }
+            }
+            let wasmProbe = """
+            const out = {res: performance.getEntriesByType('resource').map(e => e.name.split('/').pop() + ':' + Math.round(e.duration))};
+            try {
+              const r = await fetch('/1e47f304764bbc07f639.module.wasm');
+              out.wasmType = r.headers.get('content-type'); out.wasmStatus = r.status;
+              const buf = await r.arrayBuffer(); out.wasmBytes = buf.byteLength;
+              const m = await WebAssembly.compile(buf); out.wasmCompile = 'ok ' + WebAssembly.Module.imports(m).length;
+            } catch (e) { out.wasmError = String(e); }
+            try { out.bg = await Promise.race([chrome.runtime.sendMessage({command: 'nb-ping'}).then(v => 'answered ' + v, e => 'error ' + e),
+                                               new Promise(r => setTimeout(() => r('timeout'), 2000))]); } catch (e) { out.bg = 'throw ' + e; }
+            out.html = document.body.innerHTML.slice(0, 200);
+            return JSON.stringify(out);
+            """
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak webView] in
+                webView?.callAsyncJavaScript(wasmProbe, arguments: [:], in: nil, in: .page) { result in
+                    NSLog("NeuralBrowser: popup wasm probe: %@", String(describing: result))
+                }
+            }
+        }
         return true
     }
 

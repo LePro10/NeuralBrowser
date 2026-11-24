@@ -114,6 +114,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             // Many sites gate features on a Safari-like UA token.
             config.applicationNameForUserAgent = app.options.tabUserAgentName ?? Self.userAgentApplicationName
         }
+        PagePolyfills.install(in: config.userContentController)
         let webView = WKWebView(frame: webContainer.bounds, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true

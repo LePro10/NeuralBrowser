@@ -172,6 +172,24 @@ public enum Prelude {
             (function () {
               "use strict";
               const g = globalThis;
+              // WebKit has no Symbol.dispose / Symbol.asyncDispose yet. Code transpiled for `using`
+              // (Bitwarden: background, popup, inline menu) throws "Symbol.dispose is not defined".
+              for (const name of ["dispose", "asyncDispose"]) {
+                if (typeof Symbol[name] !== "symbol") {
+                  try { Object.defineProperty(Symbol, name, { value: Symbol.for("Symbol." + name) }); } catch (e) {}
+                }
+              }
+              // Extension pages carry a Chrome token in their user agent (ExtensionManager), but the
+              // background service worker can start without it. Bitwarden then detects no browser at
+              // all and its background crashes ("this.device.toString", popup spins forever).
+              try {
+                const ua = g.navigator && g.navigator.userAgent;
+                if (typeof ua === "string" && g.location && g.location.protocol === "webkit-extension:" &&
+                    ua.indexOf(" Chrome/") === -1) {
+                  const fixed = ua.replace(/ Safari\\/[\\d.]+$/, "") + " Chrome/142.0.0.0 Safari/605.1.15";
+                  Object.defineProperty(g.navigator, "userAgent", { get: () => fixed, configurable: true });
+                }
+              } catch (e) {}
               const applied = new Set(), failed = [];
               const used = (rule) => { applied.add(rule); };
               // Registries filled by the rules below: missing members, wrapped members, missing namespaces.

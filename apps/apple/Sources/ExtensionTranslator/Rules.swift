@@ -40,7 +40,7 @@ public struct RuleHit: Codable, Sendable, Equatable {
 /// The rule set. Bump `version` whenever a rule is added or its output changes;
 /// installed extensions record the version they were translated with.
 public enum RuleSet {
-    public static let version = 2
+    public static let version = 4
 
     public static let manifestComments = RuleInfo(
         id: "manifest-comments", title: "Remove comments from manifest.json", mechanism: .manifest,
